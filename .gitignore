@@ -1,0 +1,6 @@
+/target
+stackql
+/.stackql
+stackql*.sh
+stackql*.zip
+stackql*.pkg
