@@ -1,5 +1,5 @@
-use clap::{Arg, ArgMatches, Command};
 use crate::utils::display::print_unicode_box;
+use clap::{Arg, ArgMatches, Command};
 
 pub fn command() -> Command {
     Command::new("test")
@@ -11,5 +11,8 @@ pub fn command() -> Command {
 pub fn execute(matches: &ArgMatches) {
     let stack_dir = matches.get_one::<String>("stack_dir").unwrap();
     let stack_env = matches.get_one::<String>("stack_env").unwrap();
-    print_unicode_box(&format!("Testing stack: [{}] in environment: [{}]", stack_dir, stack_env));
+    print_unicode_box(&format!(
+        "Testing stack: [{}] in environment: [{}]",
+        stack_dir, stack_env
+    ));
 }

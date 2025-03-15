@@ -1,12 +1,12 @@
-use std::fmt;
 use std::error::Error;
+use std::fmt;
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub enum AppError {
     BinaryNotFound,
     CommandFailed(String),
     IoError(std::io::Error),
-    // Add more error types as needed
 }
 
 impl fmt::Display for AppError {
@@ -25,4 +25,9 @@ impl From<std::io::Error> for AppError {
     fn from(error: std::io::Error) -> Self {
         Self::IoError(error)
     }
+}
+
+// New helper function
+pub fn get_binary_path_with_error() -> Result<PathBuf, AppError> {
+    crate::utils::binary::get_binary_path().ok_or(AppError::BinaryNotFound)
 }

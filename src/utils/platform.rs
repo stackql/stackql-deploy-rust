@@ -1,5 +1,3 @@
-use std::env;
-
 #[derive(Debug, PartialEq)]
 pub enum Platform {
     Windows,

@@ -1,9 +1,10 @@
-use clap::Command;
-use std::process;
-use colored::*;
 use crate::utils::display::print_unicode_box;
 use crate::utils::platform::get_platform;
-use crate::utils::stackql::{get_version, get_installed_providers, get_stackql_path};
+use crate::utils::server::{get_server_pid, is_server_running};
+use crate::utils::stackql::{get_installed_providers, get_stackql_path, get_version};
+use clap::Command;
+use colored::*;
+use std::process;
 
 pub fn command() -> Command {
     Command::new("info").about("Display version information")
@@ -11,7 +12,7 @@ pub fn command() -> Command {
 
 pub fn execute() {
     print_unicode_box("📋 Getting program information...");
-    
+
     // Get stackql version
     let version_info = match get_version() {
         Ok(info) => info,
@@ -20,33 +21,52 @@ pub fn execute() {
             process::exit(1);
         }
     };
-    
+
     // Get platform
     let platform = get_platform();
-    
+
     // Get binary path
     let binary_path = match get_stackql_path() {
         Some(path) => path.to_string_lossy().to_string(),
-        None => "Not found".to_string(),
+        _none => "Not found".to_string(),
     };
-    
+
+    // Check server status
+    let default_port = 5444;
+    let server_running = is_server_running(default_port);
+    let server_pid = if server_running {
+        get_server_pid(default_port).unwrap_or(0)
+    } else {
+        0
+    };
+
     // Get installed providers
     let providers = match get_installed_providers() {
         Ok(provs) => provs,
         Err(_) => Vec::new(),
     };
-    
+
     // Print information
     println!("{}", "stackql-deploy CLI".green().bold());
     println!("  Version: 0.1.0\n");
-    
+
     println!("{}", "StackQL Library".green().bold());
     println!("  Version: {}", version_info.version);
+    println!("  SHA: {}", version_info.sha);
     println!("  Platform: {:?}", platform);
-    println!("  Binary Path: {}\n", binary_path);
-    
+    println!("  Binary Path: {}", binary_path);
+
+    println!("\n{}", "StackQL Server".green().bold());
+    if server_running {
+        println!("  Status: {}", "Running".green());
+        println!("  PID: {}", server_pid);
+        println!("  Port: {}", default_port);
+    } else {
+        println!("  Status: {}", "Not Running".yellow());
+    }
+
     // Update the providers display section
-    println!("{}", "Installed Providers".green().bold());
+    println!("\n{}", "Installed Providers".green().bold());
     if providers.is_empty() {
         println!("  No providers installed");
     } else {

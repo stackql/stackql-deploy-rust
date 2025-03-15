@@ -7,16 +7,27 @@ pub fn print_unicode_box(message: &str) {
     let border_color = "\x1b[93m"; // Yellow
     let reset_color = "\x1b[0m";
     let lines: Vec<&str> = message.split('\n').collect();
-    
+
     // Calculate width using unicode_width to properly account for emojis
-    let max_length = lines.iter()
+    let max_length = lines
+        .iter()
         .map(|line| UnicodeWidthStr::width(*line))
         .max()
         .unwrap_or(0);
-    
-    let top_border = format!("{}┌{}┐{}", border_color, "─".repeat(max_length + 2), reset_color);
-    let bottom_border = format!("{}└{}┘{}", border_color, "─".repeat(max_length + 2), reset_color);
-    
+
+    let top_border = format!(
+        "{}┌{}┐{}",
+        border_color,
+        "─".repeat(max_length + 2),
+        reset_color
+    );
+    let bottom_border = format!(
+        "{}└{}┘{}",
+        border_color,
+        "─".repeat(max_length + 2),
+        reset_color
+    );
+
     println!("{}", top_border);
     for line in lines {
         // Calculate proper padding based on the visual width
@@ -33,6 +44,7 @@ pub fn print_error(message: &str) {
 }
 
 /// Print a success message in green
+#[allow(dead_code)]
 pub fn print_success(message: &str) {
     println!("{}", message.green());
 }

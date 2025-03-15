@@ -1,7 +1,10 @@
 pub mod build;
 pub mod info;
 pub mod init;
+pub mod plan;
 pub mod shell;
+pub mod start_server;
+pub mod stop_server;
 pub mod teardown;
 pub mod test;
 pub mod upgrade;
