@@ -1,0 +1,26 @@
+#
+# google starter project manifest file, add and update values as needed
+#
+version: 1
+name: "{{ stack_name }}"
+description: description for "{{ stack_name }}"
+providers:
+  - google
+globals:
+- name: project
+  description: google project name
+  value: "{% raw %}{{ MY_PROJECT_NAME }}{% endraw %}"
+- name: region
+  value: australia-southeast1
+- name: default_zone
+  value: australia-southeast1-a
+resources:
+- name: example_vpc
+  description: example vpc network
+  props:
+  - name: vpc_name
+    description: name for the vpc
+    value: "{% raw %}{{ stack_name }}-{{ stack_env }}-vpc{% endraw %}"
+  exports:
+  - vpc_name    
+  - vpc_link   
