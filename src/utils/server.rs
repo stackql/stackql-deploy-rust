@@ -191,7 +191,6 @@ pub fn start_server(options: &ServerOptions) -> Result<u32, String> {
     let log_path = Path::new("stackql.log");
     let log_file = OpenOptions::new()
         .create(true)
-        .write(true)
         .append(true)
         .open(log_path)
         .map_err(|e| format!("Failed to open log file: {}", e))?;

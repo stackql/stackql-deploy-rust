@@ -41,10 +41,7 @@ pub fn execute() {
     };
 
     // Get installed providers
-    let providers = match get_installed_providers() {
-        Ok(provs) => provs,
-        Err(_) => Vec::new(),
-    };
+    let providers = get_installed_providers().unwrap_or_default();
 
     // Print information
     println!("{}", "stackql-deploy CLI".green().bold());

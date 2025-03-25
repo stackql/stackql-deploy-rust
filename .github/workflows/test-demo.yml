@@ -1,0 +1,68 @@
+name: Test Demo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'demo/**'
+      - '.github/workflows/test-demo.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'demo/**'
+      - '.github/workflows/test-demo.yml'
+
+jobs:
+  test-demo:
+    name: Test Demo Projects
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Placeholder deployment
+        run: |
+          echo "🚀 Testing Demos (placeholder)"
+          echo "This is a placeholder step - actual implementation pending"    
+      # - name: Checkout repository
+      #   uses: actions/checkout@v4
+      
+      # - name: Install Rust toolchain
+      #   uses: dtolnay/rust-toolchain@stable
+      
+      # - name: Build CLI
+      #   run: cargo build --release
+      
+      # - name: Configure AWS credentials
+      #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      #   uses: aws-actions/configure-aws-credentials@v2
+      #   with:
+      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-region: us-east-1
+      
+      # - name: Configure Azure credentials
+      #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      #   uses: azure/login@v1
+      #   with:
+      #     creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      # - name: Setup Google Cloud SDK
+      #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      #   uses: google-github-actions/setup-gcloud@v1
+      #   with:
+      #     service_account_key: ${{ secrets.GCP_SA_KEY }}
+      #     project_id: ${{ secrets.GCP_PROJECT_ID }}
+      
+      # - name: Run AWS demo tests
+      #   run: |
+      #     cd demo/aws
+      #     ../../target/release/stackql-deploy test demo-stack dev --dry-run
+      
+      # - name: Run Azure demo tests
+      #   run: |
+      #     cd demo/azure
+      #     ../../target/release/stackql-deploy test demo-stack dev --dry-run
+      
+      # - name: Run GCP demo tests
+      #   run: |
+      #     cd demo/gcp
+      #     ../../target/release/stackql-deploy test demo-stack dev --dry-run

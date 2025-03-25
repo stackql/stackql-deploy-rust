@@ -1,0 +1,49 @@
+name: Deploy Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/deploy-website.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/deploy-website.yml'
+
+jobs:
+  deploy-website:
+    name: Build and Deploy Website
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Placeholder deployment
+        run: |
+          echo "🚀 Deploying Website (placeholder)"
+          echo "This is a placeholder step - actual implementation pending"
+      # - name: Checkout repository
+      #   uses: actions/checkout@v4
+      
+      # - name: Setup Node.js
+      #   uses: actions/setup-node@v3
+      #   with:
+      #     node-version: '18'
+      #     cache: 'npm'
+      #     cache-dependency-path: 'website/package-lock.json'
+      
+      # - name: Install dependencies
+      #   working-directory: website
+      #   run: npm ci
+      
+      # - name: Build website
+      #   working-directory: website
+      #   run: npm run build
+      
+      # - name: Deploy to GitHub Pages
+      #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      #   uses: peaceiris/actions-gh-pages@v3
+      #   with:
+      #     github_token: ${{ secrets.GITHUB_TOKEN }}
+      #     publish_dir: website/build
+      #     cname: deploy.stackql.io # Replace with your domain if applicable

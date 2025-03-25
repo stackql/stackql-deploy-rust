@@ -16,7 +16,6 @@ cargo run
 # Build and run with command line arguments
 cargo run -- build --env prod --provider aws --region us-east-1
 
-
 ./target/release/stackql-deploy --version
 
 ./target/release/stackql-deploy --help

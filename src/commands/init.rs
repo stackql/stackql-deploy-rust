@@ -1,29 +1,83 @@
-use clap::{Command, Arg, ArgAction, ArgMatches};
+use crate::utils::display::print_unicode_box;
+use clap::{Arg, ArgAction, ArgMatches, Command};
+use colored::*;
+use reqwest::blocking::Client;
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use std::collections::HashSet;
-use colored::*;
-use tera::{Tera, Context};
-use crate::utils::display::print_unicode_box;
+use tera::{Context, Tera};
+
+// The base URL for GitHub template repository
+const GITHUB_TEMPLATE_BASE: &str =
+    "https://raw.githubusercontent.com/stackql/stackql-deploy-rust/main/template-hub/";
 
 // AWS templates
-const AWS_RESOURCE_TEMPLATE: &str = include_str!("../../templates/aws/resources/example_vpc.iql.template");
-const AWS_MANIFEST_TEMPLATE: &str = include_str!("../../templates/aws/stackql_manifest.yml.template");
-const AWS_README_TEMPLATE: &str = include_str!("../../templates/aws/README.md.template");
+const AWS_RESOURCE_TEMPLATE: &str =
+    include_str!("../../template-hub/aws/starter/resources/example_vpc.iql.template");
+const AWS_MANIFEST_TEMPLATE: &str =
+    include_str!("../../template-hub/aws/starter/stackql_manifest.yml.template");
+const AWS_README_TEMPLATE: &str = include_str!("../../template-hub/aws/starter/README.md.template");
 
 // Azure templates
-const AZURE_RESOURCE_TEMPLATE: &str = include_str!("../../templates/azure/resources/example_res_grp.iql.template");
-const AZURE_MANIFEST_TEMPLATE: &str = include_str!("../../templates/azure/stackql_manifest.yml.template");
-const AZURE_README_TEMPLATE: &str = include_str!("../../templates/azure/README.md.template");
+const AZURE_RESOURCE_TEMPLATE: &str =
+    include_str!("../../template-hub/azure/starter/resources/example_res_grp.iql.template");
+const AZURE_MANIFEST_TEMPLATE: &str =
+    include_str!("../../template-hub/azure/starter/stackql_manifest.yml.template");
+const AZURE_README_TEMPLATE: &str =
+    include_str!("../../template-hub/azure/starter/README.md.template");
 
 // Google templates
-const GOOGLE_RESOURCE_TEMPLATE: &str = include_str!("../../templates/google/resources/example_vpc.iql.template");
-const GOOGLE_MANIFEST_TEMPLATE: &str = include_str!("../../templates/google/stackql_manifest.yml.template");
-const GOOGLE_README_TEMPLATE: &str = include_str!("../../templates/google/README.md.template");
+const GOOGLE_RESOURCE_TEMPLATE: &str =
+    include_str!("../../template-hub/google/starter/resources/example_vpc.iql.template");
+const GOOGLE_MANIFEST_TEMPLATE: &str =
+    include_str!("../../template-hub/google/starter/stackql_manifest.yml.template");
+const GOOGLE_README_TEMPLATE: &str =
+    include_str!("../../template-hub/google/starter/README.md.template");
 
 const DEFAULT_PROVIDER: &str = "azure";
 const SUPPORTED_PROVIDERS: [&str; 3] = ["aws", "google", "azure"];
+
+// Define template sources
+enum TemplateSource {
+    Embedded(String), // Built-in template using one of the supported providers
+    Custom(String),   // Custom template path or URL
+}
+
+impl TemplateSource {
+    // Get provider name (for embedded) or template path (for custom)
+    #[allow(dead_code)]
+    fn provider_or_path(&self) -> &str {
+        match self {
+            TemplateSource::Embedded(provider) => provider,
+            TemplateSource::Custom(path) => path,
+        }
+    }
+
+    // Determine sample resource name based on provider or template
+    fn get_sample_res_name(&self) -> &str {
+        match self {
+            TemplateSource::Embedded(provider) => match provider.as_str() {
+                "google" => "example_vpc",
+                "azure" => "example_res_grp",
+                "aws" => "example_vpc",
+                _ => "example_resource",
+            },
+            TemplateSource::Custom(path) => {
+                // Try to determine resource name based on path
+                if path.contains("aws") {
+                    "example_vpc"
+                } else if path.contains("azure") {
+                    "example_res_grp"
+                } else if path.contains("google") {
+                    "example_vpc"
+                } else {
+                    "example_resource"
+                }
+            }
+        }
+    }
+}
 
 pub fn command() -> Command {
     Command::new("init")
@@ -32,7 +86,7 @@ pub fn command() -> Command {
             Arg::new("stack_name")
                 .help("Name of the new stack project")
                 .required(true)
-                .index(1)
+                .index(1),
         )
         .arg(
             Arg::new("provider")
@@ -40,6 +94,15 @@ pub fn command() -> Command {
                 .long("provider")
                 .help("Specify a provider (aws, azure, google)")
                 .action(ArgAction::Set)
+                .conflicts_with("template"),
+        )
+        .arg(
+            Arg::new("template")
+                .short('t')
+                .long("template")
+                .help("Template path or URL (e.g., 'aws/starter' or full GitHub URL)")
+                .action(ArgAction::Set)
+                .conflicts_with("provider"),
         )
         .arg(
             Arg::new("env")
@@ -47,30 +110,41 @@ pub fn command() -> Command {
                 .long("env")
                 .help("Environment name (dev, test, prod)")
                 .default_value("dev")
-                .action(ArgAction::Set)
+                .action(ArgAction::Set),
         )
 }
 
 pub fn execute(matches: &ArgMatches) {
     print_unicode_box("🚀 Initializing new project...");
-    
-    let stack_name = matches.get_one::<String>("stack_name")
+
+    let stack_name = matches
+        .get_one::<String>("stack_name")
         .expect("Stack name is required");
-    
+
     let stack_name = stack_name.replace('_', "-").to_lowercase();
-    
-    let env = matches.get_one::<String>("env")
+
+    let env = matches
+        .get_one::<String>("env")
         .expect("Environment defaulted to dev")
         .to_string();
-    
-    // Get the provider with validation
-    let provider = validate_provider(matches.get_one::<String>("provider").map(|s| s.as_str()));
-    
+
+    // Check if using custom template or provider
+    let template_source = if let Some(template_path) = matches.get_one::<String>("template") {
+        TemplateSource::Custom(template_path.clone())
+    } else {
+        // Get the provider with validation
+        let provider = validate_provider(matches.get_one::<String>("provider").map(|s| s.as_str()));
+        TemplateSource::Embedded(provider)
+    };
+
     // Create project structure
-    match create_project_structure(&stack_name, &provider, &env) {
+    match create_project_structure(&stack_name, &template_source, &env) {
         Ok(_) => {
-            println!("{}", format!("Project {} initialized successfully.", stack_name).green());
-        },
+            println!(
+                "{}",
+                format!("Project {} initialized successfully.", stack_name).green()
+            );
+        }
         Err(e) => {
             eprintln!("{}", format!("Error initializing project: {}", e).red());
         }
@@ -79,7 +153,7 @@ pub fn execute(matches: &ArgMatches) {
 
 fn validate_provider(provider: Option<&str>) -> String {
     let supported: HashSet<&str> = SUPPORTED_PROVIDERS.iter().cloned().collect();
-    
+
     match provider {
         Some(p) if supported.contains(p) => p.to_string(),
         Some(p) => {
@@ -88,7 +162,7 @@ fn validate_provider(provider: Option<&str>) -> String {
                 p, SUPPORTED_PROVIDERS.join(", "), DEFAULT_PROVIDER
             ).yellow());
             DEFAULT_PROVIDER.to_string()
-        },
+        }
         _none => {
             // Silently default to DEFAULT_PROVIDER
             DEFAULT_PROVIDER.to_string()
@@ -96,103 +170,190 @@ fn validate_provider(provider: Option<&str>) -> String {
     }
 }
 
-fn create_project_structure(stack_name: &str, provider: &str, env: &str) -> Result<(), String> {
-    let cwd = std::env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+// Function to fetch template content from URL
+fn fetch_template(url: &str) -> Result<String, String> {
+    let client = Client::new();
+    client
+        .get(url)
+        .send()
+        .map_err(|e| format!("Failed to fetch template: {}", e))?
+        .text()
+        .map_err(|e| format!("Failed to read template content: {}", e))
+}
+
+// Normalize GitHub URL to raw content URL
+fn normalize_github_url(url: &str) -> String {
+    if url.starts_with("https://github.com") {
+        // Convert github.com URL to raw.githubusercontent.com
+        url.replace("https://github.com", "https://raw.githubusercontent.com")
+            .replace("/tree/", "/")
+    } else {
+        url.to_string()
+    }
+}
+
+// Build full URL or path for templates
+fn build_template_url(template_path: &str, resource_name: &str, file_type: &str) -> String {
+    // Check if template_path is an absolute URL
+    if template_path.starts_with("http://") || template_path.starts_with("https://") {
+        let base_url = normalize_github_url(template_path);
+
+        match file_type {
+            "resource" => format!("{}/resources/{}.iql.template", base_url, resource_name),
+            "manifest" => format!("{}/stackql_manifest.yml.template", base_url),
+            "readme" => format!("{}/README.md.template", base_url),
+            _ => base_url,
+        }
+    } else {
+        // It's a relative path, prepend with GitHub template base
+        let base_url = format!("{}{}", GITHUB_TEMPLATE_BASE, template_path);
+
+        match file_type {
+            "resource" => format!("{}/resources/{}.iql.template", base_url, resource_name),
+            "manifest" => format!("{}/stackql_manifest.yml.template", base_url),
+            "readme" => format!("{}/README.md.template", base_url),
+            _ => base_url,
+        }
+    }
+}
+
+fn get_template_content(
+    template_source: &TemplateSource,
+    template_type: &str,
+    resource_name: &str,
+) -> Result<String, String> {
+    match template_source {
+        TemplateSource::Embedded(provider) => {
+            // Use embedded templates
+            match (provider.as_str(), template_type) {
+                ("aws", "resource") => Ok(AWS_RESOURCE_TEMPLATE.to_string()),
+                ("aws", "manifest") => Ok(AWS_MANIFEST_TEMPLATE.to_string()),
+                ("aws", "readme") => Ok(AWS_README_TEMPLATE.to_string()),
+                ("azure", "resource") => Ok(AZURE_RESOURCE_TEMPLATE.to_string()),
+                ("azure", "manifest") => Ok(AZURE_MANIFEST_TEMPLATE.to_string()),
+                ("azure", "readme") => Ok(AZURE_README_TEMPLATE.to_string()),
+                ("google", "resource") => Ok(GOOGLE_RESOURCE_TEMPLATE.to_string()),
+                ("google", "manifest") => Ok(GOOGLE_MANIFEST_TEMPLATE.to_string()),
+                ("google", "readme") => Ok(GOOGLE_README_TEMPLATE.to_string()),
+                _ => Err(format!(
+                    "Unsupported provider or template type: {}, {}",
+                    provider, template_type
+                )),
+            }
+        }
+        TemplateSource::Custom(path) => {
+            // Fetch template from URL or path
+            let template_url = build_template_url(path, resource_name, template_type);
+
+            // Fetch content from URL
+            println!(
+                "{}",
+                format!("Fetching template from: {}", template_url).blue()
+            );
+            fetch_template(&template_url)
+        }
+    }
+}
+
+fn create_project_structure(
+    stack_name: &str,
+    template_source: &TemplateSource,
+    env: &str,
+) -> Result<(), String> {
+    let cwd =
+        std::env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
     let base_path = cwd.join(stack_name);
-    
+
     // Check if directory already exists
     if base_path.exists() {
         return Err(format!("Directory '{}' already exists", stack_name));
     }
-    
+
     // Create necessary directories
     let resource_dir = base_path.join("resources");
-    fs::create_dir_all(&resource_dir).map_err(|e| format!("Failed to create directories: {}", e))?;
-    
+    fs::create_dir_all(&resource_dir)
+        .map_err(|e| format!("Failed to create directories: {}", e))?;
+
     // Determine sample resource name based on provider
-    let sample_res_name = match provider {
-        "google" => "example_vpc",
-        "azure" => "example_res_grp",
-        "aws" => "example_vpc",
-        _ => "example_resource",
-    };
-    
+    let sample_res_name = template_source.get_sample_res_name();
+
     // Set up template context
     let mut context = Context::new();
     context.insert("stack_name", stack_name);
     context.insert("stack_env", env);
-    
+
     // Create files
-    create_manifest_file(&base_path, provider, &context)?;
-    create_readme_file(&base_path, provider, &context)?;
-    create_resource_file(&resource_dir, sample_res_name, provider, &context)?;
-    
+    create_manifest_file(&base_path, template_source, &context)?;
+    create_readme_file(&base_path, template_source, &context)?;
+    create_resource_file(&resource_dir, sample_res_name, template_source, &context)?;
+
     Ok(())
 }
 
-fn create_resource_file(resource_dir: &Path, sample_res_name: &str, provider: &str, context: &Context) -> Result<(), String> {
-    let template_str = match provider {
-        "aws" => AWS_RESOURCE_TEMPLATE,
-        "azure" => AZURE_RESOURCE_TEMPLATE,
-        "google" => GOOGLE_RESOURCE_TEMPLATE,
-        _ => "-- Example resource\n",
-    };
-    
+fn create_resource_file(
+    resource_dir: &Path,
+    sample_res_name: &str,
+    template_source: &TemplateSource,
+    context: &Context,
+) -> Result<(), String> {
+    // Get template content
+    let template_str = get_template_content(template_source, "resource", sample_res_name)?;
+
     // Render template with Tera
-    let resource_content = render_template(template_str, context)
+    let resource_content = render_template(&template_str, context)
         .map_err(|e| format!("Template rendering error: {}", e))?;
-    
+
     let resource_path = resource_dir.join(format!("{}.iql", sample_res_name));
     let mut file = fs::File::create(resource_path)
         .map_err(|e| format!("Failed to create resource file: {}", e))?;
-    
+
     file.write_all(resource_content.as_bytes())
         .map_err(|e| format!("Failed to write to resource file: {}", e))?;
-    
+
     Ok(())
 }
 
-fn create_manifest_file(base_path: &Path, provider: &str, context: &Context) -> Result<(), String> {
-    let template_str = match provider {
-        "aws" => AWS_MANIFEST_TEMPLATE,
-        "azure" => AZURE_MANIFEST_TEMPLATE,
-        "google" => GOOGLE_MANIFEST_TEMPLATE,
-        _ => "name: {{stack_name}}\nversion: 0.1.0\ndescription: StackQL IaC project\n",
-    };
-    
+fn create_manifest_file(
+    base_path: &Path,
+    template_source: &TemplateSource,
+    context: &Context,
+) -> Result<(), String> {
+    // Get template content
+    let template_str = get_template_content(template_source, "manifest", "")?;
+
     // Render template with Tera
-    let manifest_content = render_template(template_str, context)
+    let manifest_content = render_template(&template_str, context)
         .map_err(|e| format!("Template rendering error: {}", e))?;
-    
+
     let manifest_path = base_path.join("stackql_manifest.yml");
     let mut file = fs::File::create(manifest_path)
         .map_err(|e| format!("Failed to create manifest file: {}", e))?;
-    
+
     file.write_all(manifest_content.as_bytes())
         .map_err(|e| format!("Failed to write to manifest file: {}", e))?;
-    
+
     Ok(())
 }
 
-fn create_readme_file(base_path: &Path, provider: &str, context: &Context) -> Result<(), String> {
-    let template_str = match provider {
-        "aws" => AWS_README_TEMPLATE,
-        "azure" => AZURE_README_TEMPLATE,
-        "google" => GOOGLE_README_TEMPLATE, 
-        _ => "# {{stack_name}}\n\nInfrastructure as Code project\n",
-    };
-    
+fn create_readme_file(
+    base_path: &Path,
+    template_source: &TemplateSource,
+    context: &Context,
+) -> Result<(), String> {
+    // Get template content
+    let template_str = get_template_content(template_source, "readme", "")?;
+
     // Render template with Tera
-    let readme_content = render_template(template_str, context)
+    let readme_content = render_template(&template_str, context)
         .map_err(|e| format!("Template rendering error: {}", e))?;
-    
+
     let readme_path = base_path.join("README.md");
     let mut file = fs::File::create(readme_path)
         .map_err(|e| format!("Failed to create README file: {}", e))?;
-    
+
     file.write_all(readme_content.as_bytes())
         .map_err(|e| format!("Failed to write to README file: {}", e))?;
-    
+
     Ok(())
 }
 
@@ -201,7 +362,7 @@ fn render_template(template_str: &str, context: &Context) -> Result<String, Stri
     let mut tera = Tera::default();
     tera.add_raw_template("template", template_str)
         .map_err(|e| format!("Failed to add template: {}", e))?;
-    
+
     tera.render("template", context)
         .map_err(|e| format!("Failed to render template: {}", e))
 }
