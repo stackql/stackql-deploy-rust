@@ -54,8 +54,8 @@ jobs:
       - name: Build release
         run: ./ci-scripts/build.sh
       
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: stackql-deploy
-          path: target/release/stackql-deploy
+      # - name: Upload artifact
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: stackql-deploy
+      #     path: target/release/stackql-deploy
