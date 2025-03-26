@@ -6,9 +6,12 @@ echo "==============================================="
 echo "  Building stackql-deploy"
 echo "==============================================="
 
-# Build in release mode
-echo "Building in release mode..."
-cargo build --release
+# Read contributors into a comma-separated string
+CONTRIBS=$(paste -sd, contributors.csv | sed 's/,$//')
+
+# Build in release mode with env var for contributors
+echo "Building in release mode with contributors..."
+CONTRIBUTORS="$CONTRIBS" cargo rustc --release -- -C link-arg=-s
 
 # Check if build was successful
 if [ $? -eq 0 ]; then
@@ -19,22 +22,19 @@ else
     exit 1
 fi
 
-# Create binaries for different platforms if cross-compilation tools are available
+# Optional: Cross compile
 if command -v cross &> /dev/null; then
     echo -e "\nCross-compiling for multiple platforms..."
-    
-    # Build for Windows
+
     echo "Building for Windows..."
     cross build --release --target x86_64-pc-windows-gnu
-    
-    # Build for macOS
+
     echo "Building for macOS..."
     cross build --release --target x86_64-apple-darwin
-    
-    # Build for Linux
+
     echo "Building for Linux..."
     cross build --release --target x86_64-unknown-linux-gnu
-    
+
     echo -e "\n✅ Cross-compilation completed!"
     echo "Binaries located in ./target/{target}/release/"
 fi

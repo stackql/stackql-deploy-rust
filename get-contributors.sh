@@ -1,0 +1,1 @@
+./stackql exec --output csv -f contributors.csv -H "SELECT a.login FROM github.activity.repo_stargazers AS a JOIN github.repos.contributors AS c ON a.login = c.login WHERE a.owner = 'stackql' AND a.repo IN ('stackql','stackql-deploy') AND c.owner = 'stackql' AND c.repo = 'stackql-deploy' GROUP BY a.login HAVING COUNT(DISTINCT a.repo) = 2"

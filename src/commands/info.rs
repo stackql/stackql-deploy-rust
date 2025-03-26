@@ -71,4 +71,19 @@ pub fn execute() {
             println!("  {} {}", provider.name.bold(), provider.version);
         }
     }
+
+    // Display contributors
+    let raw_contributors = option_env!("CONTRIBUTORS").unwrap_or("");
+    let contributors: Vec<&str> = raw_contributors
+        .split(',')
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+
+    if !contributors.is_empty() {
+        println!("\n{}", "Special thanks to:".green().bold());
+
+        for chunk in contributors.chunks(5) {
+            println!("  {}", chunk.join(", "));
+        }
+    }
 }

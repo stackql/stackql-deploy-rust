@@ -37,3 +37,16 @@ cargo run -- build --env prod --provider aws --region us-east-1
 ./target/release/stackql-deploy shell
 
 ./target/release/stackql-deploy upgrade
+
+# Using built-in provider template
+./target/release/stackql-deploy init my-project --provider aws
+
+# Using relative path to template in GitHub
+./target/release/stackql-deploy init my-project --template google/starter
+
+# Using full GitHub URL
+./target/release/stackql-deploy init my-project --template https://github.com/stackql/stackql-deploy-rust/tree/main/template-hub/azure/starter
+
+./target/release/stackql-deploy init my-project --template https://raw.githubusercontent.com/stackql/stackql-deploy-rust/main/template-hub/azure/starter
+
+./target/release/stackql-deploy init my-project --template https://raw.githubusercontent.com/stackql/stackql-deploy-rust/main/template-hub/azure/fred

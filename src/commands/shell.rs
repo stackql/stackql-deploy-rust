@@ -1,6 +1,6 @@
 use crate::utils::display::print_unicode_box;
+use crate::utils::query::{execute_query, QueryResult};
 use crate::utils::server::{is_server_running, start_server, ServerOptions};
-use crate::utils::stackql::{execute_query_with_pg, QueryResult};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use colored::*;
 use postgres::Client;
@@ -42,7 +42,6 @@ pub fn execute(matches: &ArgMatches) {
     let localhost = String::from("localhost");
     let host = matches.get_one::<String>("host").unwrap_or(&localhost);
 
-    // Check if server is running, start if not
     if host == "localhost" && !is_server_running(port) {
         println!("{}", "Server not running. Starting server...".yellow());
         let options = ServerOptions {
@@ -61,7 +60,6 @@ pub fn execute(matches: &ArgMatches) {
         }
     }
 
-    // Connect to the server
     let connection_string = format!(
         "host={} port={} user=postgres dbname=stackql application_name=stackql",
         host, port
@@ -78,11 +76,9 @@ pub fn execute(matches: &ArgMatches) {
     println!("Type 'exit' to quit the shell");
     println!("---");
 
-    // Set up command history with rustyline
     let mut rl = Editor::<()>::new().unwrap();
-    let _ = rl.load_history("stackql_history.txt"); // Silently load history, ignore errors
+    let _ = rl.load_history("stackql_history.txt");
 
-    // REPL loop
     loop {
         let prompt = format!("stackql ({}:{})=> ", host, port);
         let readline = rl.readline(&prompt);
@@ -94,7 +90,6 @@ pub fn execute(matches: &ArgMatches) {
                     continue;
                 }
 
-                // Add to history
                 rl.add_history_entry(input);
 
                 if input.eq_ignore_ascii_case("exit") || input.eq_ignore_ascii_case("quit") {
@@ -102,14 +97,17 @@ pub fn execute(matches: &ArgMatches) {
                     break;
                 }
 
-                // Execute the query
-                match execute_query_with_pg(input, port) {
+                match execute_query(input, port) {
                     Ok(result) => match result {
-                        QueryResult::Data { columns, rows } => {
+                        QueryResult::Data {
+                            columns,
+                            rows,
+                            notices: _,
+                        } => {
                             print_table(columns, rows);
                         }
                         QueryResult::Command(cmd) => {
-                            println!("{}", format!("Command completed: {}", cmd).green());
+                            println!("{}", cmd.green());
                         }
                         QueryResult::Empty => {
                             println!("{}", "Query executed successfully. No results.".green());
@@ -135,19 +133,15 @@ pub fn execute(matches: &ArgMatches) {
         }
     }
 
-    // Save history
-    let _ = rl.save_history("stackql_history.txt"); // Silently save history, ignore errors
+    let _ = rl.save_history("stackql_history.txt");
 }
 
-// Function to print a formatted table
 fn print_table(
-    columns: Vec<crate::utils::stackql::QueryResultColumn>,
-    rows: Vec<crate::utils::stackql::QueryResultRow>,
+    columns: Vec<crate::utils::query::QueryResultColumn>,
+    rows: Vec<crate::utils::query::QueryResultRow>,
 ) {
-    // Calculate column widths
     let mut column_widths: Vec<usize> = columns.iter().map(|col| col.name.len()).collect();
 
-    // Update widths based on data
     for row in &rows {
         for (i, value) in row.values.iter().enumerate() {
             if i < column_widths.len() && value.len() > column_widths[i] {
@@ -156,7 +150,7 @@ fn print_table(
         }
     }
 
-    // Print top border
+    // Print header border
     print!("+");
     for width in &column_widths {
         print!("{}+", "-".repeat(width + 2));
@@ -174,14 +168,14 @@ fn print_table(
     }
     println!();
 
-    // Print header separator
+    // Print border after header
     print!("+");
     for width in &column_widths {
         print!("{}+", "-".repeat(width + 2));
     }
     println!();
 
-    // Print row data
+    // Print each row with a border after it
     let row_count = rows.len();
     for row in rows {
         print!("|");
@@ -191,16 +185,15 @@ fn print_table(
             }
         }
         println!();
+
+        // Print border after each row
+        print!("+");
+        for width in &column_widths {
+            print!("{}+", "-".repeat(width + 2));
+        }
+        println!();
     }
 
-    // Print bottom border
-    print!("+");
-    for width in &column_widths {
-        print!("{}+", "-".repeat(width + 2));
-    }
-    println!();
-
-    // Print row count
     if row_count > 0 {
         println!("{} rows returned", row_count);
     }

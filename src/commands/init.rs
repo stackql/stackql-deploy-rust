@@ -2,6 +2,7 @@ use crate::utils::display::print_unicode_box;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use colored::*;
 use reqwest::blocking::Client;
+use reqwest::StatusCode;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
@@ -173,10 +174,25 @@ fn validate_provider(provider: Option<&str>) -> String {
 // Function to fetch template content from URL
 fn fetch_template(url: &str) -> Result<String, String> {
     let client = Client::new();
-    client
+    let response = client
         .get(url)
         .send()
-        .map_err(|e| format!("Failed to fetch template: {}", e))?
+        .map_err(|e| format!("Failed to fetch template: {}", e))?;
+
+    // Check if response is successful (status code 200-299)
+    if !response.status().is_success() {
+        // Handle 404 and other error status codes
+        if response.status() == StatusCode::NOT_FOUND {
+            return Err(format!("Template not found at URL: {}", url));
+        } else {
+            return Err(format!(
+                "Failed to fetch template: HTTP status {}",
+                response.status()
+            ));
+        }
+    }
+
+    response
         .text()
         .map_err(|e| format!("Failed to read template content: {}", e))
 }
@@ -269,11 +285,6 @@ fn create_project_structure(
         return Err(format!("Directory '{}' already exists", stack_name));
     }
 
-    // Create necessary directories
-    let resource_dir = base_path.join("resources");
-    fs::create_dir_all(&resource_dir)
-        .map_err(|e| format!("Failed to create directories: {}", e))?;
-
     // Determine sample resource name based on provider
     let sample_res_name = template_source.get_sample_res_name();
 
@@ -282,10 +293,20 @@ fn create_project_structure(
     context.insert("stack_name", stack_name);
     context.insert("stack_env", env);
 
+    // First validate that all templates can be fetched before creating any directories
+    let manifest_template = get_template_content(template_source, "manifest", "")?;
+    let readme_template = get_template_content(template_source, "readme", "")?;
+    let resource_template = get_template_content(template_source, "resource", sample_res_name)?;
+
+    // Now create directories
+    let resource_dir = base_path.join("resources");
+    fs::create_dir_all(&resource_dir)
+        .map_err(|e| format!("Failed to create directories: {}", e))?;
+
     // Create files
-    create_manifest_file(&base_path, template_source, &context)?;
-    create_readme_file(&base_path, template_source, &context)?;
-    create_resource_file(&resource_dir, sample_res_name, template_source, &context)?;
+    create_manifest_file(&base_path, &manifest_template, &context)?;
+    create_readme_file(&base_path, &readme_template, &context)?;
+    create_resource_file(&resource_dir, sample_res_name, &resource_template, &context)?;
 
     Ok(())
 }
@@ -293,14 +314,11 @@ fn create_project_structure(
 fn create_resource_file(
     resource_dir: &Path,
     sample_res_name: &str,
-    template_source: &TemplateSource,
+    template_str: &str,
     context: &Context,
 ) -> Result<(), String> {
-    // Get template content
-    let template_str = get_template_content(template_source, "resource", sample_res_name)?;
-
     // Render template with Tera
-    let resource_content = render_template(&template_str, context)
+    let resource_content = render_template(template_str, context)
         .map_err(|e| format!("Template rendering error: {}", e))?;
 
     let resource_path = resource_dir.join(format!("{}.iql", sample_res_name));
@@ -315,14 +333,11 @@ fn create_resource_file(
 
 fn create_manifest_file(
     base_path: &Path,
-    template_source: &TemplateSource,
+    template_str: &str,
     context: &Context,
 ) -> Result<(), String> {
-    // Get template content
-    let template_str = get_template_content(template_source, "manifest", "")?;
-
     // Render template with Tera
-    let manifest_content = render_template(&template_str, context)
+    let manifest_content = render_template(template_str, context)
         .map_err(|e| format!("Template rendering error: {}", e))?;
 
     let manifest_path = base_path.join("stackql_manifest.yml");
@@ -337,14 +352,11 @@ fn create_manifest_file(
 
 fn create_readme_file(
     base_path: &Path,
-    template_source: &TemplateSource,
+    template_str: &str,
     context: &Context,
 ) -> Result<(), String> {
-    // Get template content
-    let template_str = get_template_content(template_source, "readme", "")?;
-
     // Render template with Tera
-    let readme_content = render_template(&template_str, context)
+    let readme_content = render_template(template_str, context)
         .map_err(|e| format!("Template rendering error: {}", e))?;
 
     let readme_path = base_path.join("README.md");
