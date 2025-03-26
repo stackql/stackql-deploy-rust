@@ -1,0 +1,15 @@
+SELECT login FROM
+(
+SELECT login, SUM(contributions) total_contributions FROM
+(SELECT login, contributions
+FROM github.repos.contributors
+WHERE owner = 'stackql'
+AND repo = 'stackql'
+UNION
+SELECT login, contributions
+FROM github.repos.contributors
+WHERE owner = 'stackql'
+AND repo = 'stackql-deploy') t 
+GROUP BY login
+ORDER BY total_contributions DESC
+) t1
