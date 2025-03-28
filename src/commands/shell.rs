@@ -1,7 +1,9 @@
 use crate::utils::display::print_unicode_box;
 use crate::utils::query::{execute_query, QueryResult};
-use crate::utils::server::{is_server_running, start_server, ServerOptions};
-use clap::{Arg, ArgAction, ArgMatches, Command};
+use crate::utils::server::{is_server_running, start_server, StartServerOptions};
+use clap::{ArgMatches, Command};
+use crate::app::LOCAL_SERVER_ADDRESSES;
+use crate::globals::{server_host, server_port};
 use colored::*;
 use postgres::Client;
 use postgres::NoTls;
@@ -12,39 +14,19 @@ use std::process;
 pub fn command() -> Command {
     Command::new("shell")
         .about("Launch the interactive shell")
-        .arg(
-            Arg::new("port")
-                .short('p')
-                .long("port")
-                .help("Port to connect to")
-                .default_value("5444")
-                .action(ArgAction::Set),
-        )
-        .arg(
-            Arg::new("host")
-                .short('h')
-                .long("host")
-                .help("Host to connect to")
-                .default_value("localhost")
-                .action(ArgAction::Set),
-        )
 }
 
 pub fn execute(matches: &ArgMatches) {
     print_unicode_box("🔗 Launching interactive shell...");
 
-    let port = matches
-        .get_one::<String>("port")
-        .unwrap_or(&"5444".to_string())
-        .parse::<u16>()
-        .unwrap_or(5444);
+    let host = server_host();
+    let port = server_port();
 
-    let localhost = String::from("localhost");
-    let host = matches.get_one::<String>("host").unwrap_or(&localhost);
-
-    if host == "localhost" && !is_server_running(port) {
+    // Check if server is local and needs to be started
+    if LOCAL_SERVER_ADDRESSES.contains(&host) && !is_server_running(port) {
         println!("{}", "Server not running. Starting server...".yellow());
-        let options = ServerOptions {
+        let options = StartServerOptions {
+            host: host.clone(),
             port,
             ..Default::default()
         };
@@ -60,6 +42,7 @@ pub fn execute(matches: &ArgMatches) {
         }
     }
 
+    // Connect to the server using the global host and port
     let connection_string = format!(
         "host={} port={} user=postgres dbname=stackql application_name=stackql",
         host, port
@@ -97,7 +80,7 @@ pub fn execute(matches: &ArgMatches) {
                     break;
                 }
 
-                match execute_query(input, port) {
+                match execute_query(input) {
                     Ok(result) => match result {
                         QueryResult::Data {
                             columns,

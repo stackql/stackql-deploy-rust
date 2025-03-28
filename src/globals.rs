@@ -1,0 +1,23 @@
+use crate::app::{DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT};
+use once_cell::sync::OnceCell;
+
+// Global static cells that will hold our values
+static STACKQL_SERVER_HOST: OnceCell<String> = OnceCell::new();
+static STACKQL_SERVER_PORT: OnceCell<u16> = OnceCell::new();
+
+// Initialize the global values
+pub fn init_globals(host: String, port: u16) {
+    // Only set if not already set (first initialization wins)
+    STACKQL_SERVER_HOST.set(host).ok();
+    STACKQL_SERVER_PORT.set(port).ok();
+}
+
+// Getter for the host value
+pub fn server_host() -> &'static str {
+    STACKQL_SERVER_HOST.get().map_or(DEFAULT_SERVER_HOST, |s| s.as_str())
+}
+
+// Getter for the port value 
+pub fn server_port() -> u16 {
+    STACKQL_SERVER_PORT.get().copied().unwrap_or(DEFAULT_SERVER_PORT)
+}

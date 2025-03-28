@@ -1,3 +1,4 @@
+use crate::app::DEFAULT_LOG_FILE;
 use crate::utils::binary::get_binary_path;
 use colored::*;
 use std::fs::OpenOptions;
@@ -6,18 +7,24 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::Duration;
 
-pub struct ServerOptions {
+pub struct StartServerOptions {
+    pub host: String,
     pub port: u16,
     pub registry: Option<String>,
-    pub additional_args: Vec<String>,
+    pub mtls_config: Option<String>,
+    pub custom_auth_config: Option<String>,
+    pub log_level: Option<String>,
 }
 
-impl Default for ServerOptions {
+impl Default for StartServerOptions {
     fn default() -> Self {
         Self {
-            port: 5444,
+            host: "localhost".to_string(),
+            port: crate::app::DEFAULT_SERVER_PORT,
             registry: None,
-            additional_args: Vec::new(),
+            mtls_config: None,
+            custom_auth_config: None,
+            log_level: None,
         }
     }
 }
@@ -149,7 +156,7 @@ pub fn get_server_pid(port: u16) -> Option<u32> {
 }
 
 /// Start the stackql server with the given options
-pub fn start_server(options: &ServerOptions) -> Result<u32, String> {
+pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
     let binary_path = match get_binary_path() {
         Some(path) => path,
         _none => return Err("StackQL binary not found".to_string()),
@@ -166,31 +173,35 @@ pub fn start_server(options: &ServerOptions) -> Result<u32, String> {
 
     // Prepare command with all options
     let mut cmd = ProcessCommand::new(&binary_path);
+    
+    // Always include address and port
+    cmd.arg("--pgsrv.address").arg(&options.host);
     cmd.arg("--pgsrv.port").arg(options.port.to_string());
 
+    // Add optional parameters if provided
     if let Some(registry) = &options.registry {
         cmd.arg("--registry").arg(registry);
     }
 
-    for arg in &options.additional_args {
-        if arg.contains("=") {
-            let parts: Vec<&str> = arg.split('=').collect();
-            if parts.len() == 2 {
-                cmd.arg(parts[0]).arg(parts[1]);
-            } else {
-                cmd.arg(arg);
-            }
-        } else {
-            cmd.arg(arg);
-        }
+    if let Some(mtls_config) = &options.mtls_config {
+        cmd.arg("--mtls.config").arg(mtls_config);
+    }
+
+    if let Some(custom_auth) = &options.custom_auth_config {
+        cmd.arg("--custom-auth.config").arg(custom_auth);
+    }
+
+    if let Some(log_level) = &options.log_level {
+        cmd.arg("--log.level").arg(log_level);
     }
 
     cmd.arg("srv");
 
     // Setup logging
-    let log_path = Path::new("stackql.log");
+    let log_path = Path::new(DEFAULT_LOG_FILE);
     let log_file = OpenOptions::new()
         .create(true)
+        .write(true)
         .append(true)
         .open(log_path)
         .map_err(|e| format!("Failed to open log file: {}", e))?;
@@ -222,6 +233,7 @@ pub fn start_server(options: &ServerOptions) -> Result<u32, String> {
 /// Stop the stackql server
 pub fn stop_server(port: u16) -> Result<(), String> {
     if !is_server_running(port) {
+        println!("{}", format!("No server running on port {}", port).yellow());
         return Ok(());
     }
 

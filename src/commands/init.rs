@@ -1,3 +1,7 @@
+use crate::app::{
+    aws_templates, azure_templates, google_templates, DEFAULT_PROVIDER, GITHUB_TEMPLATE_BASE,
+    SUPPORTED_PROVIDERS,
+};
 use crate::utils::display::print_unicode_box;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use colored::*;
@@ -8,36 +12,6 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 use tera::{Context, Tera};
-
-// The base URL for GitHub template repository
-const GITHUB_TEMPLATE_BASE: &str =
-    "https://raw.githubusercontent.com/stackql/stackql-deploy-rust/main/template-hub/";
-
-// AWS templates
-const AWS_RESOURCE_TEMPLATE: &str =
-    include_str!("../../template-hub/aws/starter/resources/example_vpc.iql.template");
-const AWS_MANIFEST_TEMPLATE: &str =
-    include_str!("../../template-hub/aws/starter/stackql_manifest.yml.template");
-const AWS_README_TEMPLATE: &str = include_str!("../../template-hub/aws/starter/README.md.template");
-
-// Azure templates
-const AZURE_RESOURCE_TEMPLATE: &str =
-    include_str!("../../template-hub/azure/starter/resources/example_res_grp.iql.template");
-const AZURE_MANIFEST_TEMPLATE: &str =
-    include_str!("../../template-hub/azure/starter/stackql_manifest.yml.template");
-const AZURE_README_TEMPLATE: &str =
-    include_str!("../../template-hub/azure/starter/README.md.template");
-
-// Google templates
-const GOOGLE_RESOURCE_TEMPLATE: &str =
-    include_str!("../../template-hub/google/starter/resources/example_vpc.iql.template");
-const GOOGLE_MANIFEST_TEMPLATE: &str =
-    include_str!("../../template-hub/google/starter/stackql_manifest.yml.template");
-const GOOGLE_README_TEMPLATE: &str =
-    include_str!("../../template-hub/google/starter/README.md.template");
-
-const DEFAULT_PROVIDER: &str = "azure";
-const SUPPORTED_PROVIDERS: [&str; 3] = ["aws", "google", "azure"];
 
 // Define template sources
 enum TemplateSource {
@@ -242,15 +216,15 @@ fn get_template_content(
         TemplateSource::Embedded(provider) => {
             // Use embedded templates
             match (provider.as_str(), template_type) {
-                ("aws", "resource") => Ok(AWS_RESOURCE_TEMPLATE.to_string()),
-                ("aws", "manifest") => Ok(AWS_MANIFEST_TEMPLATE.to_string()),
-                ("aws", "readme") => Ok(AWS_README_TEMPLATE.to_string()),
-                ("azure", "resource") => Ok(AZURE_RESOURCE_TEMPLATE.to_string()),
-                ("azure", "manifest") => Ok(AZURE_MANIFEST_TEMPLATE.to_string()),
-                ("azure", "readme") => Ok(AZURE_README_TEMPLATE.to_string()),
-                ("google", "resource") => Ok(GOOGLE_RESOURCE_TEMPLATE.to_string()),
-                ("google", "manifest") => Ok(GOOGLE_MANIFEST_TEMPLATE.to_string()),
-                ("google", "readme") => Ok(GOOGLE_README_TEMPLATE.to_string()),
+                ("aws", "resource") => Ok(aws_templates::RESOURCE_TEMPLATE.to_string()),
+                ("aws", "manifest") => Ok(aws_templates::MANIFEST_TEMPLATE.to_string()),
+                ("aws", "readme") => Ok(aws_templates::README_TEMPLATE.to_string()),
+                ("azure", "resource") => Ok(azure_templates::RESOURCE_TEMPLATE.to_string()),
+                ("azure", "manifest") => Ok(azure_templates::MANIFEST_TEMPLATE.to_string()),
+                ("azure", "readme") => Ok(azure_templates::README_TEMPLATE.to_string()),
+                ("google", "resource") => Ok(google_templates::RESOURCE_TEMPLATE.to_string()),
+                ("google", "manifest") => Ok(google_templates::MANIFEST_TEMPLATE.to_string()),
+                ("google", "readme") => Ok(google_templates::README_TEMPLATE.to_string()),
                 _ => Err(format!(
                     "Unsupported provider or template type: {}, {}",
                     provider, template_type
