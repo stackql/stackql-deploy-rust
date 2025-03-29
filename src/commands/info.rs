@@ -1,6 +1,6 @@
 use crate::utils::display::print_unicode_box;
 use crate::utils::platform::get_platform;
-use crate::utils::server::{get_server_pid, is_server_running};
+use crate::utils::server::find_all_running_servers;
 use crate::utils::stackql::{get_installed_providers, get_stackql_path, get_version};
 use clap::Command;
 use colored::*;
@@ -31,14 +31,8 @@ pub fn execute() {
         _none => "Not found".to_string(),
     };
 
-    // Check server status
-    let default_port = 5444;
-    let server_running = is_server_running(default_port);
-    let server_pid = if server_running {
-        get_server_pid(default_port).unwrap_or(0)
-    } else {
-        0
-    };
+    // Get all running StackQL servers
+    let running_servers = find_all_running_servers();
 
     // Get installed providers
     let providers = get_installed_providers().unwrap_or_default();
@@ -53,13 +47,14 @@ pub fn execute() {
     println!("  Platform: {:?}", platform);
     println!("  Binary Path: {}", binary_path);
 
-    println!("\n{}", "StackQL Server".green().bold());
-    if server_running {
-        println!("  Status: {}", "Running".green());
-        println!("  PID: {}", server_pid);
-        println!("  Port: {}", default_port);
+    // Display running servers
+    println!("\n{}", "Local StackQL Servers".green().bold());
+    if running_servers.is_empty() {
+        println!("  None");
     } else {
-        println!("  Status: {}", "Not Running".yellow());
+        for server in running_servers {
+            println!("  PID: {}, Port: {}", server.pid, server.port);
+        }
     }
 
     // Update the providers display section

@@ -43,21 +43,9 @@ pub fn command() -> Command {
 pub fn execute(matches: &ArgMatches) {
     print_unicode_box("🚀 Starting stackql server...");
 
-    // Parse port from args or use default
-    let port = matches
-        .get_one::<String>("port")
-        .unwrap_or(&server_port().to_string())
-        .parse::<u16>()
-        .unwrap_or_else(|_| {
-            eprintln!("{}", "Invalid port number. Using default.".yellow());
-            server_port()
-        });
-
-    // Parse host from args or use default
-    let host = matches
-        .get_one::<String>("host")
-        .unwrap_or(&server_host().to_string())
-        .to_string();
+    // Use global vars for host and port
+    let port = server_port();
+    let host = server_host().to_string();
 
     // Validate host - must be localhost or 0.0.0.0
     if !LOCAL_SERVER_ADDRESSES.contains(&host.as_str()) {
@@ -90,7 +78,7 @@ pub fn execute(matches: &ArgMatches) {
 
     // Create server options
     let options = StartServerOptions {
-        host,
+        host: host.clone(),
         port,
         registry,
         mtls_config,

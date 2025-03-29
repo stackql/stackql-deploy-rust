@@ -29,130 +29,140 @@ impl Default for StartServerOptions {
     }
 }
 
-/// Check if the stackql server is running
+pub struct RunningServer {
+    pub pid: u32,
+    pub port: u16,
+}
+
+/// Check if the stackql server is running on a specific port
 pub fn is_server_running(port: u16) -> bool {
-    // Check using process name and port
+    find_all_running_servers()
+        .iter()
+        .any(|server| server.port == port)
+}
+
+/// Find all stackql servers that are running and their ports
+pub fn find_all_running_servers() -> Vec<RunningServer> {
+    let mut running_servers = Vec::new();
+
     if cfg!(target_os = "windows") {
         let output = ProcessCommand::new("tasklist")
             .output()
             .unwrap_or_else(|_| panic!("Failed to execute tasklist"));
 
         let output_str = String::from_utf8_lossy(&output.stdout);
-        output_str.contains("stackql") && output_str.contains(&port.to_string())
-    } else {
-        // Try multiple pattern variations to be more robust
-        let patterns = [
-            format!("stackql.*--pgsrv.port {}", port),
-            format!("stackql.*--pgsrv.port={}", port),
-            format!("stackql.*pgsrv.port {}", port),
-            format!("stackql.*pgsrv.port={}", port),
-        ];
 
-        for pattern in patterns {
-            let output = ProcessCommand::new("pgrep")
-                .arg("-f")
-                .arg(&pattern)
-                .output();
-
-            if let Ok(output) = output {
-                if !output.stdout.is_empty() {
-                    return true;
+        for line in output_str.lines() {
+            if line.contains("stackql") {
+                if let Some(port) = extract_port_from_windows_tasklist(line) {
+                    if let Some(pid) = extract_pid_from_windows_tasklist(line) {
+                        running_servers.push(RunningServer { pid, port });
+                    }
                 }
             }
         }
-
-        // Fallback: Just check for any stackql process
+    } else {
         let output = ProcessCommand::new("pgrep")
             .arg("-f")
             .arg("stackql")
-            .output();
+            .output()
+            .unwrap_or_else(|_| panic!("Failed to execute pgrep"));
 
-        if let Ok(output) = output {
-            if !output.stdout.is_empty() {
-                // Further check if this is likely our server by examining the process details
-                let stdout_content = String::from_utf8_lossy(&output.stdout);
-                let pid = stdout_content.trim();
+        if !output.stdout.is_empty() {
+            let pids_str = String::from_utf8_lossy(&output.stdout).to_string();
+            let pids = pids_str.trim().split('\n').collect::<Vec<&str>>();
 
-                let ps_output = ProcessCommand::new("ps")
-                    .arg("-p")
-                    .arg(pid)
-                    .arg("-o")
-                    .arg("args")
-                    .output();
-
-                if let Ok(ps_output) = ps_output {
-                    let ps_str = String::from_utf8_lossy(&ps_output.stdout);
-                    return ps_str.contains(&port.to_string()) && ps_str.contains("srv");
+            for pid_str in pids {
+                if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                    if let Some(port) = extract_port_from_ps(pid_str) {
+                        running_servers.push(RunningServer { pid, port });
+                    }
                 }
             }
         }
+    }
 
-        false
+    running_servers
+}
+
+/// Extract port from process information on Unix-like systems using `ps`
+fn extract_port_from_ps(pid: &str) -> Option<u16> {
+    let ps_output = ProcessCommand::new("ps")
+        .arg("-p")
+        .arg(pid)
+        .arg("-o")
+        .arg("args")
+        .output()
+        .ok()?;
+
+    let ps_str = String::from_utf8_lossy(&ps_output.stdout);
+
+    let patterns = [
+        "--pgsrv.port=",
+        "--pgsrv.port ",
+        "pgsrv.port=",
+        "pgsrv.port ",
+    ];
+    for pattern in patterns.iter() {
+        if let Some(start_index) = ps_str.find(pattern) {
+            let port_start = start_index + pattern.len();
+            let port_end = ps_str[port_start..]
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim();
+
+            if let Ok(port) = port_end.parse::<u16>() {
+                return Some(port);
+            }
+        }
+    }
+
+    None
+}
+
+/// Extract PID from process information on Windows
+fn extract_pid_from_windows_tasklist(line: &str) -> Option<u32> {
+    line.split_whitespace()
+        .filter_map(|s| s.parse::<u32>().ok())
+        .next()
+}
+
+/// Extract port from process information on Windows
+fn extract_port_from_windows_tasklist(line: &str) -> Option<u16> {
+    if let Some(port_str) = line.split_whitespace().find(|&s| s.parse::<u16>().is_ok()) {
+        port_str.parse().ok()
+    } else {
+        None
     }
 }
 
-/// Get the PID of the running stackql server
+/// Get the PID of the running stackql server on a specific port
 pub fn get_server_pid(port: u16) -> Option<u32> {
-    if cfg!(target_os = "windows") {
-        let output = ProcessCommand::new("wmic")
-            .arg("process")
-            .arg("where")
-            .arg(format!(
-                "CommandLine like '%stackql%--pgsrv.port={}%'",
-                port
-            ))
-            .arg("get")
-            .arg("ProcessId")
-            .output()
-            .ok()?;
+    let patterns = [
+        format!("stackql.*--pgsrv.port={}", port),
+        format!("stackql.*--pgsrv.port {}", port),
+        format!("stackql.*pgsrv.port={}", port),
+        format!("stackql.*pgsrv.port {}", port),
+    ];
 
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        let lines: Vec<&str> = output_str.lines().collect();
-        if lines.len() >= 2 {
-            lines[1].trim().parse::<u32>().ok()
-        } else {
-            None
-        }
-    } else {
-        // For Linux/macOS, let's try multiple pattern variations
-        let patterns = [
-            format!("stackql.*--pgsrv.port {}", port),
-            format!("stackql.*--pgsrv.port={}", port),
-            format!("stackql.*pgsrv.port {}", port),
-            format!("stackql.*pgsrv.port={}", port),
-        ];
-
-        for pattern in patterns {
-            let output = ProcessCommand::new("pgrep")
-                .arg("-f")
-                .arg(&pattern)
-                .output()
-                .ok()?;
-
-            if !output.stdout.is_empty() {
-                let stdout_content = String::from_utf8_lossy(&output.stdout);
-                let pid_str = stdout_content.trim();
-                if let Ok(pid) = pid_str.parse::<u32>() {
-                    return Some(pid);
-                }
-            }
-        }
-
-        // Try a more general approach to find the stackql server
+    for pattern in &patterns {
         let output = ProcessCommand::new("pgrep")
             .arg("-f")
-            .arg("stackql.*srv")
+            .arg(pattern)
             .output()
             .ok()?;
 
         if !output.stdout.is_empty() {
             let stdout_content = String::from_utf8_lossy(&output.stdout);
             let pid_str = stdout_content.trim();
-            pid_str.parse::<u32>().ok()
-        } else {
-            None
+            if let Ok(pid) = pid_str.parse::<u32>() {
+                return Some(pid);
+            }
         }
     }
+
+    None
 }
 
 /// Start the stackql server with the given options
@@ -162,7 +172,6 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
         _none => return Err("StackQL binary not found".to_string()),
     };
 
-    // Check if server is already running
     if is_server_running(options.port) {
         println!(
             "{}",
@@ -171,14 +180,10 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
         return Ok(get_server_pid(options.port).unwrap_or(0));
     }
 
-    // Prepare command with all options
     let mut cmd = ProcessCommand::new(&binary_path);
-
-    // Always include address and port
     cmd.arg("--pgsrv.address").arg(&options.host);
     cmd.arg("--pgsrv.port").arg(options.port.to_string());
 
-    // Add optional parameters if provided
     if let Some(registry) = &options.registry {
         cmd.arg("--registry").arg(registry);
     }
@@ -197,7 +202,6 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
 
     cmd.arg("srv");
 
-    // Setup logging
     let log_path = Path::new(DEFAULT_LOG_FILE);
     let log_file = OpenOptions::new()
         .create(true)
@@ -205,7 +209,6 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
         .open(log_path)
         .map_err(|e| format!("Failed to open log file: {}", e))?;
 
-    // Start the server
     let child = cmd
         .stdout(Stdio::from(log_file.try_clone().unwrap()))
         .stderr(Stdio::from(log_file))
@@ -213,8 +216,6 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
         .map_err(|e| format!("Failed to start server: {}", e))?;
 
     let pid = child.id();
-
-    // Wait a bit for the server to start
     println!(
         "{}",
         format!("Starting stackql server with PID: {}", pid).green()
@@ -260,13 +261,5 @@ pub fn stop_server(port: u16) -> Result<(), String> {
             .map_err(|e| format!("Failed to stop server: {}", e))?;
     }
 
-    // Wait a bit to verify it's stopped
-    thread::sleep(Duration::from_secs(1));
-
-    if !is_server_running(port) {
-        println!("{}", "Server stopped successfully".green());
-        Ok(())
-    } else {
-        Err("Server is still running after stop attempt".to_string())
-    }
+    Ok(())
 }
