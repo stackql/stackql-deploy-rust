@@ -1,8 +1,9 @@
-use crate::app::DEFAULT_LOG_FILE;
+use crate::app::{DEFAULT_LOG_FILE, LOCAL_SERVER_ADDRESSES};
 use crate::utils::binary::get_binary_path;
 use colored::*;
 use std::fs::OpenOptions;
 use std::path::Path;
+use std::process;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -262,4 +263,50 @@ pub fn stop_server(port: u16) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Checks if the server is running and starts it if necessary.
+///
+/// This function checks if the server is local and needs to be started. If the server is not running,
+/// it attempts to start it with the specified host and port.
+///
+/// # Arguments
+///
+/// * `host` - A reference to the server host address.
+/// * `port` - The port number to check.
+///
+/// # Behavior
+///
+/// * If the server is already running locally, it will display a message indicating this.
+/// * If a remote server is specified, it will display a message indicating the remote connection.
+/// * If the server needs to be started, it will attempt to do so and indicate success or failure.
+pub fn check_and_start_server(host: &str, port: u16) {
+    if LOCAL_SERVER_ADDRESSES.contains(&host) {
+        if is_server_running(port) {
+            println!(
+                "{}",
+                format!("Local server is already running on port {}.", port).green()
+            );
+        } else {
+            println!("{}", "Server not running. Starting server...".yellow());
+
+            let options = StartServerOptions {
+                host: host.to_string(),
+                port,
+                ..Default::default()
+            };
+
+            if let Err(e) = start_server(&options) {
+                eprintln!("{}", format!("Failed to start server: {}", e).red());
+                process::exit(1);
+            }
+
+            println!("{}", "Server started successfully".green());
+        }
+    } else {
+        println!(
+            "{}",
+            format!("Using remote server {}:{}", host, port).green()
+        );
+    }
 }

@@ -1,15 +1,12 @@
-use crate::app::LOCAL_SERVER_ADDRESSES;
-use crate::globals::{connection_string, server_host, server_port};
+use crate::globals::{server_host, server_port};
+use crate::utils::connection::create_client;
 use crate::utils::display::print_unicode_box;
 use crate::utils::query::{execute_query, QueryResult};
-use crate::utils::server::{is_server_running, start_server, StartServerOptions};
+use crate::utils::server::check_and_start_server;
 use clap::{ArgMatches, Command};
 use colored::*;
-use postgres::Client;
-use postgres::NoTls;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
-use std::process;
 
 fn normalize_query(input: &str) -> String {
     input
@@ -30,36 +27,10 @@ pub fn execute(_matches: &ArgMatches) {
     let host = server_host();
     let port = server_port();
 
-    // Check if server is local and needs to be started
-    if LOCAL_SERVER_ADDRESSES.contains(&host) && !is_server_running(port) {
-        println!("{}", "Server not running. Starting server...".yellow());
-        let options = StartServerOptions {
-            host: host.to_string(),
-            port,
-            ..Default::default()
-        };
-
-        match start_server(&options) {
-            Ok(_) => {
-                println!("{}", "Server started successfully".green());
-            }
-            Err(e) => {
-                eprintln!("{}", format!("Failed to start server: {}", e).red());
-                process::exit(1);
-            }
-        }
-    }
+    check_and_start_server(host, port);
 
     // Connect to the server using the global host and port
-    let connection_string = connection_string();
-    // TODO: add support for mTLS
-    let mut stackql_client_conn = match Client::connect(connection_string, NoTls) {
-        Ok(client) => client,
-        Err(e) => {
-            eprintln!("{}", format!("Failed to connect to server: {}", e).red());
-            process::exit(1);
-        }
-    };
+    let mut stackql_client_conn = create_client();
 
     println!("Connected to stackql server at {}:{}", host, port);
     println!("Type 'exit' to quit the shell");
