@@ -48,9 +48,6 @@ pub const STACKQL_DOWNLOAD_URL: &str =
 pub const STACKQL_DOWNLOAD_URL: &str =
     "https://storage.googleapis.com/stackql-public-releases/latest/stackql_darwin_multiarch.pkg";
 
-/// Commands that require server management
-pub const SERVER_COMMANDS: [&str; 5] = ["build", "test", "plan", "teardown", "shell"];
-
 /// Commands exempt from binary check
 pub const EXEMPT_COMMANDS: [&str; 1] = ["init"];
 

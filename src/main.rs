@@ -1,12 +1,12 @@
 mod app;
 mod commands;
 mod error;
-mod utils;
 mod globals;
+mod utils;
 
 use crate::app::{
-    APP_AUTHOR, APP_DESCRIPTION, APP_NAME, APP_VERSION, 
-    DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT, EXEMPT_COMMANDS
+    APP_AUTHOR, APP_DESCRIPTION, APP_NAME, APP_VERSION, DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT,
+    EXEMPT_COMMANDS,
 };
 use crate::utils::display::{print_error, print_info};
 use clap::{Arg, ArgAction, Command};
@@ -22,10 +22,10 @@ fn main() {
         .arg(
             Arg::new("server")
                 .long("server")
-                .alias("host")      // Add --host as another option
-                .short('h')        // Add -h shorthand
+                .alias("host") // Add --host as another option
+                .short('h') // Add -h shorthand
                 .help("Server host to connect to")
-                .global(true)      // Make it available to all subcommands
+                .global(true) // Make it available to all subcommands
                 .action(ArgAction::Set),
         )
         .arg(
@@ -34,7 +34,7 @@ fn main() {
                 .long("port")
                 .help("Server port to connect to (1024-65535)")
                 .value_parser(clap::value_parser!(u16).range(1024..=65535))
-                .global(true)      // Make it available to all subcommands
+                .global(true) // Make it available to all subcommands
                 .action(ArgAction::Set),
         )
         .subcommand_required(true)

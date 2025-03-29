@@ -1,9 +1,9 @@
+use crate::app::LOCAL_SERVER_ADDRESSES;
+use crate::globals::{connection_string, server_host, server_port};
 use crate::utils::display::print_unicode_box;
 use crate::utils::query::{execute_query, QueryResult};
 use crate::utils::server::{is_server_running, start_server, StartServerOptions};
 use clap::{ArgMatches, Command};
-use crate::app::LOCAL_SERVER_ADDRESSES;
-use crate::globals::{server_host, server_port};
 use colored::*;
 use postgres::Client;
 use postgres::NoTls;
@@ -11,12 +11,20 @@ use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::process;
 
-pub fn command() -> Command {
-    Command::new("shell")
-        .about("Launch the interactive shell")
+fn normalize_query(input: &str) -> String {
+    input
+        .split('\n')
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
-pub fn execute(matches: &ArgMatches) {
+pub fn command() -> Command {
+    Command::new("shell").about("Launch the interactive shell")
+}
+
+pub fn execute(_matches: &ArgMatches) {
     print_unicode_box("🔗 Launching interactive shell...");
 
     let host = server_host();
@@ -26,7 +34,7 @@ pub fn execute(matches: &ArgMatches) {
     if LOCAL_SERVER_ADDRESSES.contains(&host) && !is_server_running(port) {
         println!("{}", "Server not running. Starting server...".yellow());
         let options = StartServerOptions {
-            host: host.clone(),
+            host: host.to_string(),
             port,
             ..Default::default()
         };
@@ -43,11 +51,9 @@ pub fn execute(matches: &ArgMatches) {
     }
 
     // Connect to the server using the global host and port
-    let connection_string = format!(
-        "host={} port={} user=postgres dbname=stackql application_name=stackql",
-        host, port
-    );
-    let _client = match Client::connect(&connection_string, NoTls) {
+    let connection_string = connection_string();
+    // TODO: add support for mTLS
+    let mut stackql_client_conn = match Client::connect(connection_string, NoTls) {
         Ok(client) => client,
         Err(e) => {
             eprintln!("{}", format!("Failed to connect to server: {}", e).red());
@@ -62,47 +68,61 @@ pub fn execute(matches: &ArgMatches) {
     let mut rl = Editor::<()>::new().unwrap();
     let _ = rl.load_history("stackql_history.txt");
 
+    let mut query_buffer = String::new(); // Accumulates input until a semicolon is found
+
     loop {
-        let prompt = format!("stackql ({}:{})=> ", host, port);
+        let prompt = if query_buffer.is_empty() {
+            format!("stackql ({}:{})=> ", host, port)
+        } else {
+            "... ".to_string()
+        };
+
         let readline = rl.readline(&prompt);
 
         match readline {
             Ok(line) => {
                 let input = line.trim();
-                if input.is_empty() {
-                    continue;
-                }
-
-                rl.add_history_entry(input);
 
                 if input.eq_ignore_ascii_case("exit") || input.eq_ignore_ascii_case("quit") {
                     println!("Goodbye");
                     break;
                 }
 
-                match execute_query(input) {
-                    Ok(result) => match result {
-                        QueryResult::Data {
-                            columns,
-                            rows,
-                            notices: _,
-                        } => {
-                            print_table(columns, rows);
+                // Accumulate the query
+                query_buffer.push_str(input);
+                query_buffer.push(' ');
+
+                if input.ends_with(';') {
+                    let normalized_input = normalize_query(&query_buffer);
+                    rl.add_history_entry(&normalized_input);
+
+                    match execute_query(&normalized_input, &mut stackql_client_conn) {
+                        Ok(result) => match result {
+                            QueryResult::Data {
+                                columns,
+                                rows,
+                                notices: _,
+                            } => {
+                                print_table(columns, rows);
+                            }
+                            QueryResult::Command(cmd) => {
+                                println!("{}", cmd.green());
+                            }
+                            QueryResult::Empty => {
+                                println!("{}", "Query executed successfully. No results.".green());
+                            }
+                        },
+                        Err(e) => {
+                            eprintln!("{}", format!("Error: {}", e).red());
                         }
-                        QueryResult::Command(cmd) => {
-                            println!("{}", cmd.green());
-                        }
-                        QueryResult::Empty => {
-                            println!("{}", "Query executed successfully. No results.".green());
-                        }
-                    },
-                    Err(e) => {
-                        eprintln!("{}", format!("Error: {}", e).red());
                     }
+
+                    query_buffer.clear();
                 }
             }
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");
+                query_buffer.clear();
                 continue;
             }
             Err(ReadlineError::Eof) => {

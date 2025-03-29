@@ -1,7 +1,7 @@
-use crate::utils::display::print_unicode_box;
-use crate::utils::server::{is_server_running, start_server, StartServerOptions};
 use crate::app::LOCAL_SERVER_ADDRESSES;
 use crate::globals::{server_host, server_port};
+use crate::utils::display::print_unicode_box;
+use crate::utils::server::{is_server_running, start_server, StartServerOptions};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use colored::*;
 use std::process;
@@ -61,7 +61,10 @@ pub fn execute(matches: &ArgMatches) {
 
     // Validate host - must be localhost or 0.0.0.0
     if !LOCAL_SERVER_ADDRESSES.contains(&host.as_str()) {
-        eprintln!("{}", "Error: Host must be 'localhost' or '0.0.0.0' for local server setup.".red());
+        eprintln!(
+            "{}",
+            "Error: Host must be 'localhost' or '0.0.0.0' for local server setup.".red()
+        );
         eprintln!("The start-server command is only for starting a local server instance.");
         process::exit(1);
     }
@@ -70,7 +73,11 @@ pub fn execute(matches: &ArgMatches) {
     if is_server_running(port) {
         println!(
             "{}",
-            format!("Server is already running on port {}. No action needed.", port).yellow()
+            format!(
+                "Server is already running on port {}. No action needed.",
+                port
+            )
+            .yellow()
         );
         process::exit(0);
     }
@@ -94,8 +101,14 @@ pub fn execute(matches: &ArgMatches) {
     // Start the server
     match start_server(&options) {
         Ok(pid) => {
-            println!("{}", format!("Stackql server started with PID: {}", pid).green());
-            println!("{}", format!("Server is listening on {}:{}", options.host, options.port).green());
+            println!(
+                "{}",
+                format!("Stackql server started with PID: {}", pid).green()
+            );
+            println!(
+                "{}",
+                format!("Server is listening on {}:{}", options.host, options.port).green()
+            );
         }
         Err(e) => {
             eprintln!("{}", format!("Failed to start server: {}", e).red());

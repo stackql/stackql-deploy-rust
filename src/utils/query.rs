@@ -1,5 +1,4 @@
-use crate::utils::server::{is_server_running, start_server, ServerOptions};
-use postgres::{Client, NoTls};
+use postgres::Client;
 
 pub struct QueryResultColumn {
     pub name: String,
@@ -20,22 +19,7 @@ pub enum QueryResult {
     Empty,
 }
 
-pub fn execute_query(query: &str, port: u16) -> Result<QueryResult, String> {
-    if !is_server_running(port) {
-        let options = ServerOptions {
-            port,
-            ..Default::default()
-        };
-        start_server(&options).map_err(|e| format!("Failed to start server: {}", e))?;
-    }
-
-    let connection_string = format!(
-        "host=localhost port={} user=postgres dbname=stackql application_name=stackql",
-        port
-    );
-    let mut client = Client::connect(&connection_string, NoTls)
-        .map_err(|e| format!("Failed to connect to server: {}", e))?;
-
+pub fn execute_query(query: &str, client: &mut Client) -> Result<QueryResult, String> {
     match client.simple_query(query) {
         Ok(results) => {
             let mut columns = Vec::new();

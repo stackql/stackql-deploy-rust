@@ -173,7 +173,7 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
 
     // Prepare command with all options
     let mut cmd = ProcessCommand::new(&binary_path);
-    
+
     // Always include address and port
     cmd.arg("--pgsrv.address").arg(&options.host);
     cmd.arg("--pgsrv.port").arg(options.port.to_string());
@@ -184,15 +184,15 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
     }
 
     if let Some(mtls_config) = &options.mtls_config {
-        cmd.arg("--mtls.config").arg(mtls_config);
+        cmd.arg("--mtls-config").arg(mtls_config);
     }
 
     if let Some(custom_auth) = &options.custom_auth_config {
-        cmd.arg("--custom-auth.config").arg(custom_auth);
+        cmd.arg("--custom-auth-config").arg(custom_auth);
     }
 
     if let Some(log_level) = &options.log_level {
-        cmd.arg("--log.level").arg(log_level);
+        cmd.arg("--log-level").arg(log_level);
     }
 
     cmd.arg("srv");
@@ -201,7 +201,6 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
     let log_path = Path::new(DEFAULT_LOG_FILE);
     let log_file = OpenOptions::new()
         .create(true)
-        .write(true)
         .append(true)
         .open(log_path)
         .map_err(|e| format!("Failed to open log file: {}", e))?;
