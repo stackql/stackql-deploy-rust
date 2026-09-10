@@ -95,8 +95,4 @@ fn test_command_runs_script_resources_and_exports_their_output() {
     run_test(&mut runner, false, false, "Error", None);
 
     assert_eq!(export_value(&runner, "hook_result").as_deref(), Some("ok"));
-    assert_ne!(
-        export_value(&runner, "hook_result").as_deref(),
-        Some(UNKNOWN)
-    );
 }

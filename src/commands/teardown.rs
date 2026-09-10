@@ -365,42 +365,41 @@ pub fn run_teardown(
         let resource_queries = runner.get_queries(resource, &full_context);
 
         // Get exists query (fallback to statecheck) - render JIT
-        let (exists_query_str, exists_retries, exists_retry_delay) =
-            if let Some(eq) = resource_queries.get("exists") {
-                match render_for_teardown(
-                    runner,
-                    resource,
-                    "exists",
-                    &eq.template,
-                    &full_context,
-                    "assuming resource does not exist, skipping...",
-                ) {
-                    Some(rendered) => (rendered, eq.options.retries, eq.options.retry_delay),
-                    None => continue,
-                }
-            } else if let Some(sq) = resource_queries.get("statecheck") {
-                info!(
-                    "exists query not defined for [{}], trying statecheck query as exists query.",
-                    resource.name
-                );
-                match render_for_teardown(
-                    runner,
-                    resource,
-                    "statecheck",
-                    &sq.template,
-                    &full_context,
-                    "skipping...",
-                ) {
-                    Some(rendered) => (rendered, sq.options.retries, sq.options.retry_delay),
-                    None => continue,
-                }
-            } else {
-                info!(
-                    "No exists or statecheck query for [{}], skipping...",
-                    resource.name
-                );
-                continue;
-            };
+        let (exists_query_str, exists_opts) = if let Some(eq) = resource_queries.get("exists") {
+            match render_for_teardown(
+                runner,
+                resource,
+                "exists",
+                &eq.template,
+                &full_context,
+                "assuming resource does not exist, skipping...",
+            ) {
+                Some(rendered) => (rendered, eq.options.clone()),
+                None => continue,
+            }
+        } else if let Some(sq) = resource_queries.get("statecheck") {
+            info!(
+                "exists query not defined for [{}], trying statecheck query as exists query.",
+                resource.name
+            );
+            match render_for_teardown(
+                runner,
+                resource,
+                "statecheck",
+                &sq.template,
+                &full_context,
+                "skipping...",
+            ) {
+                Some(rendered) => (rendered, sq.options.clone()),
+                None => continue,
+            }
+        } else {
+            info!(
+                "No exists or statecheck query for [{}], skipping...",
+                resource.name
+            );
+            continue;
+        };
 
         // Check if delete query template exists (don't render yet — may need
         // this.* fields from the exists check).
@@ -422,8 +421,8 @@ pub fn run_teardown(
             let (exists, fields) = runner.check_if_resource_exists(
                 resource,
                 &exists_query_str,
-                exists_retries,
-                exists_retry_delay,
+                exists_opts.retries,
+                exists_opts.retry_delay,
                 dry_run,
                 show_queries,
                 false,
@@ -464,7 +463,7 @@ pub fn run_teardown(
                 Some(rendered) => rendered,
                 None => continue,
             };
-            let delete_retries = dq.options.retries;
+            let delete_retries = dq.options.retries.max(1);
             let delete_retry_delay = dq.options.retry_delay;
 
             // Only keep a RETURNING clause when return_vals.delete is configured
@@ -491,24 +490,60 @@ pub fn run_teardown(
                 rendered_delete
             };
 
-            let (returning_row, delete_confirmed) = runner.delete_and_confirm(
-                resource,
-                &delete_query,
-                &exists_query_str,
-                delete_retries,
-                delete_retry_delay,
-                dry_run,
-                show_queries,
-                ignore_errors,
-            );
+            // Callback anchor, if any: polled after each delete attempt that
+            // returned a RETURNING * row, before the post-delete check.
+            let cb_anchor = if resource_queries.contains_key("callback:delete") {
+                Some("callback:delete")
+            } else if resource_queries.contains_key("callback") {
+                Some("callback")
+            } else {
+                None
+            };
 
-            // Capture RETURNING * result.
-            if let Some(ref row) = returning_row {
-                debug!("RETURNING payload for [{}]: {:?}", resource.name, row);
-                runner.store_callback_data(&resource.name, row);
+            // Delete, then confirm. Each attempt is: execute the delete,
+            // capture RETURNING * (return_vals + callback context), run the
+            // delete callback, then poll the exists query using the exists
+            // anchor's postdelete_retries / postdelete_retry_delay. If the
+            // resource is still present, wait retry_delay and re-issue the
+            // delete, up to the delete anchor's retries.
+            let mut delete_confirmed = false;
+            for attempt in 0..delete_retries {
+                if attempt > 0 {
+                    if delete_retry_delay > 0 {
+                        info!(
+                            "[{}] waiting {} seconds before re-issuing delete (attempt {}/{})...",
+                            resource.name,
+                            delete_retry_delay,
+                            attempt + 1,
+                            delete_retries
+                        );
+                        std::thread::sleep(std::time::Duration::from_secs(
+                            delete_retry_delay as u64,
+                        ));
+                    } else {
+                        info!(
+                            "[{}] re-issuing delete (attempt {}/{})...",
+                            resource.name,
+                            attempt + 1,
+                            delete_retries
+                        );
+                    }
+                }
 
-                // Apply return_vals.delete mappings from manifest.
-                if !delete_return_mappings.is_empty() {
+                let returning_row = runner.execute_delete(
+                    resource,
+                    &delete_query,
+                    dry_run,
+                    show_queries,
+                    ignore_errors,
+                );
+
+                // Capture RETURNING * result.
+                if let Some(ref row) = returning_row {
+                    debug!("RETURNING payload for [{}]: {:?}", resource.name, row);
+                    runner.store_callback_data(&resource.name, row);
+
+                    // Apply return_vals.delete mappings from manifest.
                     for (src, tgt) in &delete_return_mappings {
                         if let Some(val) = row.get(src.as_str()) {
                             if !val.is_empty() && val != "null" {
@@ -531,58 +566,70 @@ pub fn run_teardown(
                             );
                         }
                     }
-                }
-            } else if !delete_return_mappings.is_empty() {
-                warn!(
-                    "return_vals.delete specified for [{}] but no RETURNING data received",
-                    resource.name
-                );
-            }
-
-            // Run callback:delete block if present. A callback polls the
-            // handle returned by RETURNING *, so there is nothing to poll
-            // when no row came back: a dry run, a delete without RETURNING,
-            // or a delete that failed and was ignored.
-            let cb_anchor = if resource_queries.contains_key("callback:delete") {
-                Some("callback:delete")
-            } else if resource_queries.contains_key("callback") {
-                Some("callback")
-            } else {
-                None
-            };
-            if let Some(anchor) = cb_anchor {
-                if returning_row.is_none() {
-                    info!(
-                        "[{}] {} not run: the delete returned no RETURNING data{}",
-                        resource.name,
-                        anchor,
-                        if dry_run { " (dry run)" } else { "" }
+                } else if !delete_return_mappings.is_empty() && !dry_run {
+                    warn!(
+                        "return_vals.delete specified for [{}] but no RETURNING data received",
+                        resource.name
                     );
-                } else if let Some(q) = resource_queries.get(anchor) {
-                    let cb_template = q.template.clone();
-                    let cb_retries = q.options.retries;
-                    let cb_delay = q.options.retry_delay;
-                    let cb_sc_field = q.options.short_circuit_field.clone();
-                    let cb_sc_value = q.options.short_circuit_value.clone();
-                    let cb_ctx = runner.get_full_context(resource);
-                    match runner.try_render_query(&resource.name, anchor, &cb_template, &cb_ctx) {
-                        Some(rendered_cb) => runner.run_callback(
-                            resource,
-                            &rendered_cb,
-                            cb_retries,
-                            cb_delay,
-                            cb_sc_field.as_deref(),
-                            cb_sc_value.as_deref(),
-                            "delete",
-                            dry_run,
-                            show_queries,
-                        ),
-                        None => warn!(
-                            "[{}] {} has unresolved variables and was not run",
-                            resource.name, anchor
-                        ),
+                }
+
+                // Run the delete callback. A callback polls the handle
+                // returned by RETURNING *, so there is nothing to poll when
+                // no row came back: a dry run, a delete without RETURNING, or
+                // a delete that failed and was ignored.
+                if let Some(anchor) = cb_anchor {
+                    if returning_row.is_none() {
+                        info!(
+                            "[{}] {} not run: the delete returned no RETURNING data{}",
+                            resource.name,
+                            anchor,
+                            if dry_run { " (dry run)" } else { "" }
+                        );
+                    } else if let Some(q) = resource_queries.get(anchor) {
+                        let cb_template = q.template.clone();
+                        let cb_retries = q.options.retries;
+                        let cb_delay = q.options.retry_delay;
+                        let cb_sc_field = q.options.short_circuit_field.clone();
+                        let cb_sc_value = q.options.short_circuit_value.clone();
+                        let cb_ctx = runner.get_full_context(resource);
+                        match runner.try_render_query(&resource.name, anchor, &cb_template, &cb_ctx)
+                        {
+                            Some(rendered_cb) => runner.run_callback(
+                                resource,
+                                &rendered_cb,
+                                cb_retries,
+                                cb_delay,
+                                cb_sc_field.as_deref(),
+                                cb_sc_value.as_deref(),
+                                "delete",
+                                dry_run,
+                                show_queries,
+                            ),
+                            None => warn!(
+                                "[{}] {} has unresolved variables and was not run",
+                                resource.name, anchor
+                            ),
+                        }
                     }
                 }
+
+                if runner.confirm_deleted(
+                    resource,
+                    &exists_query_str,
+                    exists_opts.postdelete_retries,
+                    exists_opts.postdelete_retry_delay,
+                    dry_run,
+                    show_queries,
+                ) {
+                    delete_confirmed = true;
+                    break;
+                }
+            }
+            if !delete_confirmed {
+                info!(
+                    "[{}] delete could not be confirmed after {} attempt(s)",
+                    resource.name, delete_retries
+                );
             }
 
             if delete_confirmed {

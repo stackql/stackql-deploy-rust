@@ -1,4 +1,4 @@
-/*+ exists */
+/*+ exists, postdelete_retries=1, postdelete_retry_delay=0 */
 SELECT COUNT(*) AS count
 FROM databricks_account.provisioning.workspaces
 WHERE account_id = '{{ account_id }}'

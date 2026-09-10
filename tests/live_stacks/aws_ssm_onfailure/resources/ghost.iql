@@ -1,4 +1,4 @@
-/*+ exists */
+/*+ exists, postdelete_retries=2, postdelete_retry_delay=3 */
 SELECT 1 AS count
 
 /*+ create */

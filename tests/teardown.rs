@@ -12,7 +12,8 @@
 mod common;
 
 use common::{
-    assert_no_unknown_placeholder_sent, export_value, FakeCloud, MockServer, TestStack, UNKNOWN,
+    assert_no_unknown_placeholder_sent, export_value, FakeCloud, MockResponse, MockServer,
+    TestStack, UNKNOWN,
 };
 use stackql_deploy::commands::common_args::FailureAction;
 use stackql_deploy::commands::teardown::run_teardown;
@@ -265,9 +266,9 @@ fn teardown_does_not_abort_on_script_resources() {
 
 #[test]
 fn delete_callback_is_skipped_when_no_returning_row_was_captured() {
-    // The mock answers DELETE with a bare command tag, so no RETURNING row
-    // exists to poll. Both a dry run and a real run must skip the callback
-    // rather than fail to render `callback.*` variables.
+    // No RETURNING row exists to poll, either because it is a dry run or
+    // because the provider answered the DELETE with a bare command tag. Both
+    // must skip the callback rather than fail to render `callback.*`.
     let stack =
         TestStack::with_manifest("databricks_workspace", "manifest_with_delete_callback.yml");
 
@@ -276,11 +277,95 @@ fn delete_callback_is_skipped_when_no_returning_row_was_captured() {
     run_teardown(&mut runner, true, false, FailureAction::Error);
     assert!(!server.received("workspace_status = 'DELETED'"));
 
-    let server = MockServer::start(healthy_cloud().into_handler());
+    let cloud = healthy_cloud().answer(
+        "DELETE FROM databricks_account.provisioning.workspaces",
+        MockResponse::Command("DELETE 1".to_string()),
+    );
+    let server = MockServer::start(cloud.into_handler());
     let mut runner = stack.runner(&server, "dev");
     run_teardown(&mut runner, false, false, FailureAction::Error);
     assert!(server.received("DELETE FROM databricks_account.provisioning.workspaces"));
     assert!(!server.received("workspace_status = 'DELETED'"));
+}
+
+#[test]
+fn delete_callback_runs_before_the_post_delete_check_and_postdelete_polling_is_honoured() {
+    // The workspace delete returns a RETURNING row, and the delete only
+    // takes effect after one further read (an asynchronous provider). The
+    // exists anchor allows postdelete_retries=1, so the second check must
+    // confirm the delete; and the callback must be polled before that check.
+    let cloud = healthy_cloud().async_delete(WORKSPACES, 1).answer(
+        "workspace_status = 'DELETED'",
+        MockResponse::single_row(&[("success", "1")]),
+    );
+    let server = MockServer::start(cloud.into_handler());
+    let stack =
+        TestStack::with_manifest("databricks_workspace", "manifest_with_delete_callback.yml");
+    let mut runner = stack.runner(&server, "dev");
+
+    run_teardown(&mut runner, false, false, FailureAction::Error);
+
+    let queries = server.queries();
+    let delete_at = queries
+        .iter()
+        .position(|q| q.starts_with("DELETE FROM databricks_account.provisioning.workspaces"))
+        .expect("workspace delete sent");
+    let callback_at = queries
+        .iter()
+        .position(|q| q.contains("workspace_status = 'DELETED'"))
+        .expect("delete callback polled");
+    let checks_after_delete: Vec<usize> = queries
+        .iter()
+        .enumerate()
+        .filter(|(i, q)| {
+            *i > delete_at && q.contains("SELECT COUNT(*) AS count") && q.contains(WORKSPACES)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        callback_at > delete_at && callback_at < checks_after_delete[0],
+        "callback must run between the delete and the first post-delete check: {:?}",
+        queries
+    );
+    assert_eq!(
+        checks_after_delete.len(),
+        2,
+        "one immediate check plus one postdelete retry, got: {:?}",
+        queries
+    );
+    assert_eq!(
+        queries
+            .iter()
+            .filter(|q| q.starts_with("DELETE FROM databricks_account.provisioning.workspaces"))
+            .count(),
+        1,
+        "only one delete was needed"
+    );
+}
+
+#[test]
+fn unconfirmed_delete_does_not_stop_the_run() {
+    // The storage credential delete never takes effect within the
+    // postdelete budget, so it ends the run unconfirmed after one delete
+    // (the delete anchor's default retries=1); the workspace is still deleted.
+    let cloud = healthy_cloud().async_delete(STORAGE_CREDENTIALS, 5);
+    let server = MockServer::start(cloud.into_handler());
+    let stack = TestStack::new("databricks_workspace");
+    let mut runner = stack.runner(&server, "dev");
+
+    run_teardown(&mut runner, false, false, FailureAction::Error);
+
+    let queries = server.queries();
+    assert_eq!(
+        queries
+            .iter()
+            .filter(
+                |q| q.starts_with("DELETE FROM databricks_workspace.catalog.storage_credentials")
+            )
+            .count(),
+        1
+    );
+    assert!(server.received("DELETE FROM databricks_account.provisioning.workspaces"));
 }
 
 #[test]

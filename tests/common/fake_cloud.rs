@@ -17,6 +17,12 @@ use super::mock_server::MockResponse;
 struct TableState {
     present: bool,
     row: HashMap<String, String>,
+    /// When set, a DELETE does not remove the table immediately: it stays
+    /// present for this many further reads, mimicking a provider whose
+    /// delete completes asynchronously.
+    reads_until_gone: Option<u32>,
+    /// Countdown armed by a DELETE when `reads_until_gone` is set.
+    pending_reads: Option<u32>,
 }
 
 /// Builder for a fake provider backend. Consume it with
@@ -28,6 +34,9 @@ pub struct FakeCloud {
     /// `(needle, message)`: any statement containing `needle` fails with
     /// `message` instead of being evaluated.
     errors: Vec<(String, String)>,
+    /// `(needle, response)`: any statement containing `needle` gets this
+    /// canned response instead of being evaluated (checked after `errors`).
+    answers: Vec<(String, MockResponse)>,
 }
 
 impl FakeCloud {
@@ -54,6 +63,7 @@ impl FakeCloud {
             TableState {
                 present: true,
                 row: to_row(row),
+                ..Default::default()
             },
         );
         self
@@ -67,6 +77,7 @@ impl FakeCloud {
             TableState {
                 present: false,
                 row: to_row(row_after_create),
+                ..Default::default()
             },
         );
         self
@@ -75,6 +86,22 @@ impl FakeCloud {
     /// Any statement containing `needle` fails with `message`.
     pub fn error_on(mut self, needle: &str, message: &str) -> Self {
         self.errors.push((needle.to_string(), message.to_string()));
+        self
+    }
+
+    /// Any statement containing `needle` receives `response` verbatim.
+    pub fn answer(mut self, needle: &str, response: MockResponse) -> Self {
+        self.answers.push((needle.to_string(), response));
+        self
+    }
+
+    /// A DELETE on `table` completes asynchronously: the table still reads as
+    /// present for `reads` further selects, then disappears.
+    pub fn async_delete(mut self, table: &str, reads: u32) -> Self {
+        self.tables
+            .entry(table.to_string())
+            .or_default()
+            .reads_until_gone = Some(reads);
         self
     }
 
@@ -88,9 +115,15 @@ impl FakeCloud {
                 return MockResponse::Error(message.clone());
             }
         }
+        for (needle, response) in &self.answers {
+            if sql.contains(needle.as_str()) {
+                return response.clone();
+            }
+        }
 
         let trimmed = sql.trim().trim_end_matches(';').trim();
         let upper = trimmed.to_ascii_uppercase();
+        let returning = upper.split_whitespace().any(|word| word == "RETURNING");
 
         if upper == "SHOW PROVIDERS" {
             return MockResponse::Rows {
@@ -109,20 +142,50 @@ impl FakeCloud {
             return self.handle_select(trimmed);
         }
         if let Some(table) = capture(r"(?is)^\s*INSERT\s+INTO\s+([\w.]+)", trimmed) {
-            self.tables.entry(table).or_default().present = true;
-            return MockResponse::Command("INSERT 0 1".to_string());
+            let state = self.tables.entry(table).or_default();
+            state.present = true;
+            return dml_response(state, returning, "INSERT 0 1");
         }
         if let Some(table) = capture(r"(?is)^\s*DELETE\s+FROM\s+([\w.]+)", trimmed) {
-            self.tables.entry(table).or_default().present = false;
-            return MockResponse::Command("DELETE 1".to_string());
+            let state = self.tables.entry(table).or_default();
+            eprintln!(
+                "FAKE DELETE returning={} row_keys={:?} sql={:?}",
+                returning,
+                state.row.keys().collect::<Vec<_>>(),
+                trimmed
+            );
+            let response = dml_response(state, returning, "DELETE 1");
+            match state.reads_until_gone {
+                Some(reads) => state.pending_reads = Some(reads),
+                None => state.present = false,
+            }
+            return response;
         }
-        if capture(r"(?is)^\s*UPDATE\s+([\w.]+)", trimmed).is_some() {
-            return MockResponse::Command("UPDATE 1".to_string());
+        if let Some(table) = capture(r"(?is)^\s*UPDATE\s+([\w.]+)", trimmed) {
+            let state = self.tables.entry(table).or_default();
+            return dml_response(state, returning, "UPDATE 1");
         }
         MockResponse::empty()
     }
 
-    fn handle_select(&self, sql: &str) -> MockResponse {
+    /// Advance an asynchronous delete by one read; returns whether the table
+    /// is present for this read.
+    fn observe(&mut self, table: &str) -> bool {
+        let Some(state) = self.tables.get_mut(table) else {
+            return false;
+        };
+        if let Some(remaining) = state.pending_reads {
+            if remaining == 0 {
+                state.present = false;
+                state.pending_reads = None;
+            } else {
+                state.pending_reads = Some(remaining - 1);
+            }
+        }
+        state.present
+    }
+
+    fn handle_select(&mut self, sql: &str) -> MockResponse {
         let table = capture(r"(?is)\bFROM\s+([\w.]+)", sql);
         let select_list = select_list(sql);
         let items: Vec<(String, String)> = split_top_level_commas(&select_list)
@@ -130,12 +193,11 @@ impl FakeCloud {
             .map(|item| parse_select_item(&item))
             .collect();
 
-        let state = table.as_deref().and_then(|t| self.tables.get(t));
-        let present = match (&table, state) {
-            (None, _) => true, // literal SELECT with no FROM
-            (Some(_), Some(s)) => s.present,
-            (Some(_), None) => false, // unknown table behaves as empty
+        let present = match table.as_deref() {
+            None => true, // literal SELECT with no FROM
+            Some(t) => self.observe(t),
         };
+        let state = table.as_deref().and_then(|t| self.tables.get(t));
 
         let columns: Vec<String> = items.iter().map(|(_, alias)| alias.clone()).collect();
 
@@ -178,6 +240,22 @@ impl FakeCloud {
             rows: vec![cells],
         }
     }
+}
+
+/// Response to a DML statement: the table's row when `RETURNING` was
+/// requested (as a real provider would return the affected object), otherwise
+/// the command tag.
+fn dml_response(state: &TableState, returning: bool, tag: &str) -> MockResponse {
+    if returning && !state.row.is_empty() {
+        let mut columns: Vec<String> = state.row.keys().cloned().collect();
+        columns.sort();
+        let cells = columns.iter().map(|c| state.row.get(c).cloned()).collect();
+        return MockResponse::Rows {
+            columns,
+            rows: vec![cells],
+        };
+    }
+    MockResponse::Command(tag.to_string())
 }
 
 fn to_row(cells: &[(&str, &str)]) -> HashMap<String, String> {

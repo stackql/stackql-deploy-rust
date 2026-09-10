@@ -198,6 +198,8 @@ During teardown export collection, exports that cannot be collected are set to `
 
 Any teardown query (`exists`, `statecheck`, `exports`, `delete`, or inline `sql`) whose rendered text contains `<unknown>` is skipped rather than executed. Running it would at best match nothing and at worst put the placeholder into a hostname or identifier (for example `https://<unknown>.cloud.databricks.com/...`), which fails with a fatal `dial tcp` error and aborts the whole teardown. The resource is logged as skipped and processing continues with the next one.
 
+After each `delete` (and its `callback:delete`, if any) the `exists` query is polled until the resource is gone, up to `postdelete_retries` times `postdelete_retry_delay` seconds apart (options on the `exists` anchor, defaults 10 and 5). Only then is the delete re-issued, up to the `delete` anchor's `retries`.
+
 A `delete` statement the provider rejects aborts the teardown by default (`--on-failure error`). With `--on-failure ignore` the failure is logged, the resource is reported as not confirmed deleted, and the next resource is processed; fatal network, auth and planner errors abort in both modes. Every teardown ends with a summary of resources whose delete could not be confirmed.
 
 `skip_on_delete: true` opts a resource out of teardown explicitly:

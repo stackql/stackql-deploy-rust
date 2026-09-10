@@ -30,7 +30,7 @@ use stackql_deploy::core::utils::UNKNOWN_EXPORT_PLACEHOLDER;
 use stackql_deploy::utils::pgwire::PgwireLite;
 
 pub use fake_cloud::FakeCloud;
-pub use mock_server::MockServer;
+pub use mock_server::{MockResponse, MockServer};
 
 /// Route stackql-deploy's `log` output through the test harness so a failing
 /// test shows the same trail an operator would see. Honour `RUST_LOG` when

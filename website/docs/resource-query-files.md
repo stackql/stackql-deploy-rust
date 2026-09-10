@@ -406,7 +406,9 @@ AND JSON_EXTRACT(properties, '$.provisioningState') = 'Succeeded'
 
 ### `postdelete_retries` and `postdelete_retry_delay`
 
-The `postdelete_retries` and `postdelete_retry_delay` query options are used in `exists` queries and are implemeneted specifically for `teardown` operations, allowing time for the resource to be deleted by the provider.
+The `postdelete_retries` and `postdelete_retry_delay` query options are used in `exists` queries and are implemented specifically for `teardown` operations, allowing time for the resource to be deleted by the provider.
+
+After each `delete` statement (and its `callback:delete`, if one is defined), the `exists` query is run immediately and, while the resource is still present, up to `postdelete_retries` more times with `postdelete_retry_delay` seconds between checks. The defaults are `postdelete_retries=10` and `postdelete_retry_delay=5`. If the resource is still present after the last check, the `delete` statement is re-issued according to the `delete` anchor's own `retries` and `retry_delay` options (default `retries=1`, a single attempt), after which the resource is reported as not confirmed deleted and the teardown moves on.
 
 ```sql
 /*+ exists, postdelete_retries=10, postdelete_retry_delay=5 */

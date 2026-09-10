@@ -20,6 +20,8 @@
 - The `<evaluated>` and `<unknown>` export placeholders are no longer registered for log redaction when the export is `protected`. Previously a protected export in a dry run registered `<evaluated>` as a secret, which then masked every other placeholder in the run as `********`.
 - Command failures that are ignored (`multi` resources, and now `--on-failure ignore`) are logged at `warn` level instead of `debug`.
 - A `callback:delete` (or generic `callback`) anchor no longer aborts a `--dry-run` teardown, or a teardown whose delete returned no `RETURNING *` row. Callbacks poll the handle returned by `RETURNING *`, so they are now skipped with a log line when there is nothing to poll, matching `build`.
+- The `postdelete_retries` and `postdelete_retry_delay` options on the `exists` anchor are now honoured, as documented (defaults 10 and 5). They were parsed but never used: the post-delete check ran once immediately and once more after the `delete` anchor's `retry_delay`, which defaults to 0, so an asynchronous delete (Cloud Control, most SaaS APIs) could only be confirmed by luck of timing. After each delete attempt the exists query now polls until the resource is gone, up to `postdelete_retries` times, `postdelete_retry_delay` seconds apart; only then is the delete re-issued, up to the `delete` anchor's `retries`.
+- The `callback:delete` anchor now runs before the post-delete check rather than after it, so a provider's asynchronous delete is polled to completion before the resource is checked for absence.
 
 ## 2.1.1 (2026-08-24)
 
