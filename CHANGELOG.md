@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.2.0 (2026-09-10)
+
+### Features
+
+- `teardown --on-failure ignore` is now honoured. A `delete` statement the provider rejects is logged at `warn` level, the resource is reported as not confirmed deleted, and the teardown continues with the next resource; the default (`error`) still aborts at the first failure. Fatal errors (network, auth, planner) abort in both modes. Every teardown now ends with a summary of resources whose delete could not be confirmed. `rollback` is not meaningful for teardown and is treated as `error`.
+- Added a live integration test suite (`tests/live.rs`, `tests/live_stacks/`) that runs the real binary against real providers using free resources only: AWS SSM Parameter Store parameters (Cloud Control and native API) and GitHub repository labels. It covers create with `RETURNING *`, `return_vals`, `callback`, `statecheck`, `PatchDocument` updates, `createorupdate`, `query`/`command`/`script` resources, conditions, `file()`, `merge`, per-environment values, protected masking, stack exports, `test` pass and fail, `teardown` with `skip_on_delete`, `--on-failure`, and idempotent re-runs. The tests are `#[ignore]`d for `cargo test`; `ci-scripts/integration-test.sh` runs them, and the new `Integration Tests` workflow runs them on pull requests to `main` as a merge gate (replacing the `Test Demo` placeholder workflow). See `tests/README.md`.
+- Added `skip_on_delete: true` for resources ([#56](https://github.com/stackql/stackql-deploy-rs/issues/56)). A `query` resource with this flag is not executed during `teardown` and its declared exports are set to `<unknown>`; a `resource` or `multi` resource with this flag still has its exports collected (a downstream `delete` may need them) but its `delete` query is not executed, so the resource is retained. The flag has no effect on `build` or `test`.
+- Added an integration test suite (`tests/`) that drives the `build` and `teardown` flows against an in-process mock stackql server speaking the PostgreSQL wire protocol, with fixture stacks under `tests/fixtures/`. Tests assert on the exact statements sent and need no stackql binary, provider registry, network access, or cloud credentials. `ci-scripts/test.sh` now runs `cargo test`, and the CI workflow triggers on `tests/**` and `ci-scripts/**` changes. To support this, the crate now has a library target alongside the binary; it is not a public API.
+
+### Fixes
+
+- Teardown no longer executes queries that interpolate the `<unknown>` export placeholder. When an upstream resource had already been deleted (for example by an earlier, partially successful teardown), its exports were set to `<unknown>` and then substituted into downstream `exists`, `exports`, `delete`, and inline `sql` queries. For a Databricks workspace this produced `https://<unknown>.cloud.databricks.com/...`, a fatal `dial tcp ... no such host` error, and an aborted teardown that could never complete. Such queries are now skipped with a log line naming the resource and anchor, and the dependent resource's exports are themselves marked `<unknown>` so the skip propagates consistently.
+- Teardown now tolerates a non-fatal provider error on an `exports` query (fatal network and auth errors still abort). The resource's exports are marked `<unknown>` with a warning and the teardown continues; previously the error aborted the run.
+- Teardown no longer aborts on stacks that contain a `script` resource. Export collection tried to load a `.iql` file for the script and exited when it was not found; script exports are now marked `<unknown>` (scripts are never executed on teardown).
+- Inline `sql` on `query` resources is rendered tolerantly during teardown: a missing template variable skips the query instead of exiting the process.
+- The `test` command now evaluates `if` conditions (it previously processed every resource regardless) and runs `script` resources the same way `build` does (it previously exited with `unknown resource type: script`).
+- A `--dry-run` teardown now renders and logs each `delete` statement. Previously the dry-run exists check reported every resource as not found, so the run only showed "skipping delete".
+- The `<evaluated>` and `<unknown>` export placeholders are no longer registered for log redaction when the export is `protected`. Previously a protected export in a dry run registered `<evaluated>` as a secret, which then masked every other placeholder in the run as `********`.
+- Command failures that are ignored (`multi` resources, and now `--on-failure ignore`) are logged at `warn` level instead of `debug`.
+- A `callback:delete` (or generic `callback`) anchor no longer aborts a `--dry-run` teardown, or a teardown whose delete returned no `RETURNING *` row. Callbacks poll the handle returned by `RETURNING *`, so they are now skipped with a log line when there is nothing to poll, matching `build`.
+
 ## 2.1.1 (2026-08-24)
 
 ### Fixes

@@ -234,6 +234,13 @@ pub fn run_stackql_command(
                     } => {
                         // Check for errors in notices
                         for notice in &notices {
+                            if error_detected_in_notice(notice) && ignore_errors {
+                                warn!(
+                                    "Command returned an error notice (ignored):\n\n{}\n",
+                                    notice
+                                );
+                                continue;
+                            }
                             if error_detected_in_notice(notice) && !ignore_errors {
                                 if attempt < retries {
                                     debug!(
@@ -315,7 +322,7 @@ pub fn run_stackql_command(
                         e
                     ));
                 } else {
-                    debug!("Command failed (ignored): {}", e);
+                    warn!("Command failed (ignored):\n\n{}\n", e);
                     return String::new();
                 }
             }
@@ -587,6 +594,58 @@ fn is_version_higher(installed: &str, requested: &str) -> bool {
     parse(installed) > parse(requested)
 }
 
+/// Placeholder assigned to an export during `teardown` when its value could
+/// not be collected: the exports query returned no rows (the upstream
+/// resource may already be gone), the query could not be rendered, or the
+/// resource was skipped via `skip_on_delete`.
+///
+/// Downstream queries that would interpolate this placeholder must not be
+/// executed - see [`references_unknown_export`].
+pub const UNKNOWN_EXPORT_PLACEHOLDER: &str = "<unknown>";
+
+/// Placeholder assigned to an export during `--dry-run`, where no query is
+/// executed and the real value is not known.
+pub const DRY_RUN_EXPORT_PLACEHOLDER: &str = "<evaluated>";
+
+/// True for the framework's own export placeholders. These are never real
+/// values and must not be registered for log redaction: doing so would mask
+/// every other placeholder in the run as if it were a secret.
+pub fn is_export_placeholder(value: &str) -> bool {
+    value == UNKNOWN_EXPORT_PLACEHOLDER || value == DRY_RUN_EXPORT_PLACEHOLDER
+}
+
+/// Returns true when a rendered query contains the teardown
+/// [`UNKNOWN_EXPORT_PLACEHOLDER`], i.e. it references an export whose value
+/// could not be collected.
+///
+/// Such a query is never useful to run: at best it matches nothing, at worst
+/// the placeholder lands in a hostname or identifier and the provider call
+/// fails with a fatal, non-retryable error (for example
+/// `dial tcp: lookup <unknown>.cloud.databricks.com: no such host`), which
+/// aborts the whole teardown.
+pub fn references_unknown_export(rendered_query: &str) -> bool {
+    rendered_query.contains(UNKNOWN_EXPORT_PLACEHOLDER)
+}
+
+/// Build the fallback export map for a resource during teardown: every
+/// declared export (plain `name` or `{ column: name }` mapping) is set to
+/// [`UNKNOWN_EXPORT_PLACEHOLDER`].
+pub fn unknown_exports_for(expected_exports: &[serde_yaml::Value]) -> HashMap<String, String> {
+    let mut fallback = HashMap::new();
+    for item in expected_exports {
+        if let Some(s) = item.as_str() {
+            fallback.insert(s.to_string(), UNKNOWN_EXPORT_PLACEHOLDER.to_string());
+        } else if let Some(map) = item.as_mapping() {
+            for (_, val) in map {
+                if let Some(v) = val.as_str() {
+                    fallback.insert(v.to_string(), UNKNOWN_EXPORT_PLACEHOLDER.to_string());
+                }
+            }
+        }
+    }
+    fallback
+}
+
 /// Update global context with exported values.
 ///
 /// Each export is stored under two keys:
@@ -608,7 +667,7 @@ pub fn export_vars(
 ) {
     for (key, value) in export_data {
         let is_protected = protected_exports.contains(key);
-        if is_protected {
+        if is_protected && !is_export_placeholder(value) {
             // Register for global log redaction so the value is also masked
             // anywhere else it surfaces (e.g. interpolated into a downstream
             // resource's query shown via --dry-run or --show-queries).
@@ -1312,5 +1371,34 @@ mod tests {
             "ProgressEvent.OperationStatus",
             "SUCCESS"
         ));
+    }
+
+    #[test]
+    fn test_references_unknown_export_detects_placeholder() {
+        let rendered = "SELECT userName FROM databricks_workspace.iam.current_user                         WHERE deployment_name = '<unknown>'";
+        assert!(references_unknown_export(rendered));
+        assert!(!references_unknown_export(
+            "SELECT userName FROM databricks_workspace.iam.current_user              WHERE deployment_name = 'dbc-1234'"
+        ));
+    }
+
+    #[test]
+    fn test_unknown_exports_for_handles_plain_and_mapped_exports() {
+        let expected = vec![
+            serde_yaml::Value::String("workspace_id".to_string()),
+            serde_yaml::from_str::<serde_yaml::Value>("arn: role_arn").unwrap(),
+        ];
+        let fallback = unknown_exports_for(&expected);
+        assert_eq!(fallback.len(), 2);
+        assert_eq!(
+            fallback.get("workspace_id").map(String::as_str),
+            Some(UNKNOWN_EXPORT_PLACEHOLDER)
+        );
+        // Mapped exports use the target (value) name, not the source column.
+        assert_eq!(
+            fallback.get("role_arn").map(String::as_str),
+            Some(UNKNOWN_EXPORT_PLACEHOLDER)
+        );
+        assert!(!fallback.contains_key("arn"));
     }
 }

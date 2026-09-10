@@ -1,0 +1,21 @@
+/*+ exists, postdelete_retries=6, postdelete_retry_delay=5 */
+SELECT COUNT(*) AS count
+FROM awscc.ssm.parameters_list_only
+WHERE region = '{{ region }}'
+AND name = '{{ param_name }}'
+
+/*+ createorupdate */
+REPLACE aws.ssm.parameters
+SET Name = '{{ param_name }}',
+    Type = 'StringList',
+    Value = '{{ param_value }}',
+    Overwrite = 'true'
+WHERE region = '{{ region }}'
+
+/*+ exports */
+SELECT '{{ param_name }}' AS feature_flags_name
+
+/*+ delete */
+DELETE FROM aws.ssm.parameters
+WHERE Name = '{{ param_name }}'
+AND region = '{{ region }}'

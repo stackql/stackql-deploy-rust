@@ -194,7 +194,19 @@ graph LR
     H -->|still there| I
 ```
 
-During teardown export collection, missing exports are set to `<unknown>` rather than failing — the stack may be partially deployed.
+During teardown export collection, exports that cannot be collected are set to `<unknown>` rather than failing - the stack may be partially deployed. An export ends up `<unknown>` when its query returns no rows, returns a non-fatal provider error, cannot be rendered, belongs to a `script` resource (never executed on teardown), or belongs to a resource with `skip_on_delete: true`.
+
+Any teardown query (`exists`, `statecheck`, `exports`, `delete`, or inline `sql`) whose rendered text contains `<unknown>` is skipped rather than executed. Running it would at best match nothing and at worst put the placeholder into a hostname or identifier (for example `https://<unknown>.cloud.databricks.com/...`), which fails with a fatal `dial tcp` error and aborts the whole teardown. The resource is logged as skipped and processing continues with the next one.
+
+A `delete` statement the provider rejects aborts the teardown by default (`--on-failure error`). With `--on-failure ignore` the failure is logged, the resource is reported as not confirmed deleted, and the next resource is processed; fatal network, auth and planner errors abort in both modes. Every teardown ends with a summary of resources whose delete could not be confirmed.
+
+`skip_on_delete: true` opts a resource out of teardown explicitly:
+
+| Type | Effect on teardown |
+|------|--------------------|
+| `query` | Query not executed; declared exports set to `<unknown>` |
+| `resource` / `multi` | Exports still collected (downstream deletes may need them); `delete` not executed, resource retained |
+| `command` / `script` | No change (never executed on teardown) |
 
 ---
 

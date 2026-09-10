@@ -1,0 +1,80 @@
+/*+ exists, postdelete_retries=6, postdelete_retry_delay=5 */
+SELECT COUNT(*) AS count
+FROM awscc.ssm.parameters_list_only
+WHERE region = '{{ region }}'
+AND name = '{{ param_name }}'
+
+/*+ create */
+INSERT INTO awscc.ssm.parameters (
+  Name,
+  Type,
+  Value,
+  Description,
+  Tags,
+  region
+)
+SELECT
+  '{{ param_name }}',
+  'String',
+  '{{ param_value }}',
+  '{{ param_description }}',
+  '{{ param_tags }}',
+  '{{ region }}'
+RETURNING *
+
+/*+ callback:create, retries=6, retry_delay=5, short_circuit_field=OperationStatus, short_circuit_value=SUCCESS */
+SELECT OperationStatus = 'SUCCESS' AS success
+FROM awscc.cloud_control.resource_request
+WHERE region = '{{ region }}'
+AND RequestToken = '{{ callback.RequestToken }}'
+
+/*+ statecheck, retries=3, retry_delay=5 */
+SELECT COUNT(*) AS count FROM
+(
+  SELECT JSON_EQUAL(tags, '{{ param_tags }}') AS tags_match
+  FROM awscc.ssm.parameters
+  WHERE region = '{{ region }}'
+  AND Identifier = '{{ param_name }}'
+  AND value = '{{ param_value }}'
+) t
+WHERE tags_match = 1
+
+/*+ update */
+UPDATE awscc.ssm.parameters
+SET PatchDocument = string('{{ {
+    "Value": param_value,
+    "Tags": param_tags
+    } | generate_patch_document }}')
+WHERE Identifier = '{{ param_name }}'
+AND region = '{{ region }}'
+RETURNING *
+
+/*+ callback:update, retries=6, retry_delay=5, short_circuit_field=OperationStatus, short_circuit_value=SUCCESS */
+SELECT OperationStatus = 'SUCCESS' AS success
+FROM awscc.cloud_control.resource_request
+WHERE region = '{{ region }}'
+AND RequestToken = '{{ callback.RequestToken }}'
+
+/*+ exports */
+SELECT name AS app_config_name, value AS app_config_value
+FROM awscc.ssm.parameters
+WHERE region = '{{ region }}'
+AND Identifier = '{{ param_name }}'
+
+/*+ delete */
+DELETE FROM awscc.ssm.parameters
+WHERE Identifier = '{{ param_name }}'
+AND region = '{{ region }}'
+RETURNING *
+
+/*+ callback:delete, retries=6, retry_delay=5, short_circuit_field=OperationStatus, short_circuit_value=SUCCESS */
+SELECT OperationStatus = 'SUCCESS' AS success
+FROM awscc.cloud_control.resource_request
+WHERE region = '{{ region }}'
+AND RequestToken = '{{ callback.RequestToken }}'
+
+/*+ troubleshoot */
+SELECT OperationStatus, ErrorCode, StatusMessage
+FROM awscc.cloud_control.resource_request
+WHERE region = '{{ region }}'
+AND RequestToken = '{{ this.RequestToken }}'

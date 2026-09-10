@@ -142,6 +142,19 @@ pub struct Resource {
     #[serde(default)]
     pub skip_validation: Option<bool>,
 
+    /// When true, the resource is not processed during `teardown`.
+    ///
+    /// - `query` resources: the query is not executed and each declared
+    ///   export is set to the `<unknown>` placeholder, so any downstream
+    ///   query that references those exports is skipped rather than run.
+    /// - `resource` / `multi` resources: exports are still collected (a
+    ///   downstream `delete` may need them) but the resource's own `delete`
+    ///   query is not executed, so the resource is retained.
+    ///
+    /// Has no effect on `build` or `test`.
+    #[serde(default)]
+    pub skip_on_delete: bool,
+
     /// Auth configuration for the resource
     #[serde(default)]
     pub auth: Option<serde_yaml::Value>,
@@ -768,6 +781,37 @@ resources:
             statement.is_sequence(),
             "Statement should be resolved to a sequence, got: {:?}",
             statement
+        );
+    }
+
+    #[test]
+    fn test_skip_on_delete_defaults_false_and_parses_true() {
+        let dir = setup_test_dir();
+        let manifest_content = r#"
+version: 1
+name: test-stack
+providers:
+  - databricks_workspace
+resources:
+  - name: workspace
+    props: []
+  - name: workspace_ready
+    type: query
+    skip_on_delete: true
+    props: []
+    sql: SELECT 1 AS workspace_principal
+    exports:
+      - workspace_principal
+"#;
+        fs::write(dir.path().join("stackql_manifest.yml"), manifest_content).unwrap();
+
+        let manifest = Manifest::load_from_stack_dir(dir.path()).unwrap();
+        assert!(!manifest.find_resource("workspace").unwrap().skip_on_delete);
+        assert!(
+            manifest
+                .find_resource("workspace_ready")
+                .unwrap()
+                .skip_on_delete
         );
     }
 

@@ -465,6 +465,7 @@ mod tests {
             description: String::new(),
             r#if: None,
             skip_validation: None,
+            skip_on_delete: false,
             auth: None,
             return_vals: None,
         }
@@ -629,8 +630,8 @@ mod tests {
 
         let ctx = get_full_context(&engine, &global_context, &resource, "dev", None);
 
-        assert!(ctx.get("idempotency_token").is_none());
-        assert!(ctx.get("my_resource.idempotency_token").is_none());
+        assert!(!ctx.contains_key("idempotency_token"));
+        assert!(!ctx.contains_key("my_resource.idempotency_token"));
     }
 
     #[test]

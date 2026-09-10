@@ -1,0 +1,7 @@
+/*+ exports, retries=3, retry_delay=5 */
+SELECT
+  JSON_EXTRACT(parameters, '$[0].Version') AS app_config_version,
+  JSON_EXTRACT(parameters, '$[0].ARN') AS app_config_arn
+FROM aws.ssm.parameters
+WHERE region = '{{ region }}'
+AND Names = '{{ lookup_names }}'

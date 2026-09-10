@@ -585,10 +585,92 @@ pub fn render_inline_template(
     }
 }
 
+/// Tolerant variant of [`render_inline_template`]: returns `None` when the
+/// inline SQL references variables that are not in the context, instead of
+/// exiting the process.
+///
+/// Used by `teardown`, where an upstream export may legitimately be missing
+/// (the resource that produced it is already gone, or was skipped via
+/// `skip_on_delete`) and the correct behaviour is to skip the query.
+pub fn try_render_inline_template(
+    engine: &TemplateEngine,
+    resource_name: &str,
+    template_string: &str,
+    full_context: &HashMap<String, String>,
+) -> Option<String> {
+    let mut temp_context = prepare_query_context(full_context);
+
+    let expanded = preprocess_this_prefix(template_string, resource_name).ok()?;
+    let compat = preprocess_jinja2_compat(&expanded);
+    let processed = preprocess_inline_dicts(&compat, &mut temp_context);
+    let template_name = format!("{}__inline", resource_name);
+
+    match engine.render_with_filters(&template_name, &processed, &temp_context) {
+        Ok(rendered) => {
+            let unresolved_re = Regex::new(r"\{\{[^}]+\}\}").unwrap();
+            if unresolved_re.is_match(&rendered) {
+                debug!(
+                    "Unresolved variables in [{}] inline template, deferring render",
+                    resource_name
+                );
+                return None;
+            }
+            debug!(
+                "[{}] rendered inline template:\n\n{}\n",
+                resource_name, rendered
+            );
+            Some(rendered)
+        }
+        Err(e) => {
+            debug!(
+                "[{}] inline template could not be rendered: {}",
+                resource_name, e
+            );
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::template::engine::TemplateEngine;
+
+    // ── try_render_inline_template unit tests ─────────────────────────────
+
+    #[test]
+    fn test_try_render_inline_template_renders_when_context_complete() {
+        let engine = TemplateEngine::new();
+        let mut ctx = HashMap::new();
+        ctx.insert("deployment_name".to_string(), "dbc-1234".to_string());
+        let rendered = try_render_inline_template(
+            &engine,
+            "workspace_ready",
+            "SELECT userName FROM databricks_workspace.iam.current_user \
+             WHERE deployment_name = '{{ deployment_name }}'",
+            &ctx,
+        );
+        assert_eq!(
+            rendered.as_deref(),
+            Some(
+                "SELECT userName FROM databricks_workspace.iam.current_user \
+                 WHERE deployment_name = 'dbc-1234'"
+            )
+        );
+    }
+
+    #[test]
+    fn test_try_render_inline_template_returns_none_when_variable_missing() {
+        let engine = TemplateEngine::new();
+        let ctx: HashMap<String, String> = HashMap::new();
+        let rendered = try_render_inline_template(
+            &engine,
+            "workspace_ready",
+            "SELECT 1 WHERE deployment_name = '{{ deployment_name }}'",
+            &ctx,
+        );
+        assert!(rendered.is_none());
+    }
 
     // ── preprocess_this_prefix unit tests ─────────────────────────────────
 

@@ -1,0 +1,17 @@
+/*+ exists */
+SELECT 1 AS count
+
+/*+ create */
+SELECT 1 AS count
+
+/*+ delete, retries=1, retry_delay=0 */
+DELETE FROM awscc.ssm.parameters
+WHERE Identifier = '{{ param_name }}'
+AND region = '{{ region }}'
+RETURNING *
+
+/*+ troubleshoot:delete */
+SELECT OperationStatus, ErrorCode, StatusMessage
+FROM awscc.cloud_control.resource_request
+WHERE region = '{{ region }}'
+AND RequestToken = '{{ this.RequestToken }}'

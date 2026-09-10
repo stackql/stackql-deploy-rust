@@ -1,0 +1,60 @@
+name: Integration Tests
+
+# Live provider tests: the real stackql-deploy binary against AWS (SSM
+# Parameter Store) and GitHub (repository labels), using free resources only.
+# Intended as a required status check on pull requests to main.
+#
+# Repository secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (an IAM
+# principal allowed to manage SSM parameters under /stackql-deploy/ and to
+# call s3:DeleteBucket, which is expected to fail). The GitHub stack uses the
+# workflow's own GITHUB_TOKEN.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'ci-scripts/**'
+      - 'build.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/integration-tests.yml'
+  workflow_dispatch:
+
+# One live run at a time: the stacks use a per-run name suffix, but serial
+# execution keeps provider rate limits and the label namespace predictable.
+concurrency:
+  group: integration-tests
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  live:
+    name: Live provider tests
+    # Secrets are not exposed to pull requests from forks; skip rather than fail.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      STACKQL_GITHUB_USERNAME: github-actions
+      STACKQL_GITHUB_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_OWNER: ${{ github.repository_owner }}
+      GITHUB_REPO: ${{ github.event.repository.name }}
+      STACKQL_DEPLOY_LIVE_RUN_ID: gh${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install stackql
+        uses: stackql/setup-stackql@v2
+      - name: Show stackql version
+        run: stackql --version
+      - name: Run live integration tests
+        run: bash ci-scripts/integration-test.sh

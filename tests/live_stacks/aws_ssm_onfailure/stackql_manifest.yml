@@ -1,0 +1,49 @@
+version: 1
+name: sqld-live-onfailure
+description: |
+  Live integration stack whose resources always fail to delete; nothing is
+  ever created. Each exists check is a literal that reports the resource as
+  present, so teardown always attempts the delete:
+
+    ghost            S3 DeleteBucket on a bucket that never existed. S3
+                     rejects the call synchronously, which is what
+                     --on-failure decides about: error aborts the run, ignore
+                     logs the failure and carries on.
+    ghost_parameter  Cloud Control DeleteResource on a parameter that never
+                     existed. Cloud Control accepts the request and fails it
+                     asynchronously, so the delete statement itself succeeds;
+                     the post-delete check then fails and the troubleshoot
+                     anchor surfaces the ProgressEvent error (NotFound) using
+                     the RequestToken captured from RETURNING * via
+                     return_vals.delete.
+
+  Resources are torn down in reverse manifest order, so ghost_parameter is
+  processed first.
+
+  Inputs (pass with -e): AWS_REGION, RUN_ID.
+providers:
+  - aws::v26.08.00444
+  - awscc::v26.07.00426
+
+globals:
+  - name: region
+    value: "{{ AWS_REGION }}"
+  - name: run_id
+    value: "{{ RUN_ID }}"
+
+resources:
+  - name: ghost
+    description: reports itself as existing; S3 rejects its delete synchronously
+    props:
+      - name: bucket_name
+        value: "stackql-deploy-{{ stack_env }}-{{ run_id }}-ghost-does-not-exist"
+
+  - name: ghost_parameter
+    description: reports itself as existing; Cloud Control fails its delete asynchronously
+    props:
+      - name: param_name
+        value: "/stackql-deploy/{{ stack_env }}/{{ run_id }}/ghost-does-not-exist"
+    return_vals:
+      delete:
+        - RequestToken
+        - OperationStatus

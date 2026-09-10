@@ -1,0 +1,10 @@
+/*+ exists */
+SELECT 1 AS count
+
+/*+ create */
+SELECT 1 AS count
+
+/*+ delete, retries=1, retry_delay=0 */
+DELETE FROM aws.s3.buckets
+WHERE bucket = '{{ bucket_name }}'
+AND region = '{{ region }}'

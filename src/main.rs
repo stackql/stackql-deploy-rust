@@ -22,27 +22,19 @@
 //!
 //! For detailed help, use `--help` or `-h` flags.
 
-mod app;
-mod commands;
-pub mod core;
-mod error;
-mod globals;
-mod resource;
-mod template;
-mod utils;
-
 use std::process;
 
 use clap::{Arg, ArgAction, Command};
 
-use error::{get_binary_path_with_error, AppError};
 use log::{debug, error, info};
 
-use crate::app::{
+use stackql_deploy::app::{
     APP_AUTHOR, APP_DESCRIPTION, APP_NAME, APP_VERSION, DEFAULT_LOG_LEVEL, DEFAULT_SERVER_HOST,
     DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STR, EXEMPT_COMMANDS, LOG_LEVELS,
 };
-use crate::utils::logging::initialize_logger;
+use stackql_deploy::error::{get_binary_path_with_error, AppError};
+use stackql_deploy::utils::logging::initialize_logger;
+use stackql_deploy::{commands, globals, print_error};
 
 /// Main function that initializes the CLI and handles command execution.
 fn main() {

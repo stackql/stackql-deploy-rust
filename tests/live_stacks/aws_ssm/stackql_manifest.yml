@@ -1,0 +1,191 @@
+version: 1
+name: sqld-live-ssm
+description: |
+  Live integration stack for stackql-deploy built on AWS Systems Manager
+  Parameter Store (standard tier parameters are free). Exercises the full
+  resource lifecycle against two DML styles - Cloud Control (awscc: INSERT and
+  UPDATE with RETURNING, callbacks, PatchDocument) and the native API (aws:
+  REPLACE as createorupdate) - plus query, command and script resource types,
+  file() directives, per-environment values, merged tags, conditions,
+  return_vals, protected exports, skip_on_delete and stack-level exports.
+
+  Note: this stackql release does not support LIKE against the Cloud Control
+  *_list_only views (it works on ordinary list tables), so prefix_summary
+  filters with INSTR instead.
+
+  Inputs (pass with -e): AWS_REGION, RUN_ID, APP_CONFIG_VALUE.
+  Every parameter is created under /stackql-deploy/<stack_env>/<RUN_ID>/ so
+  concurrent runs never collide.
+providers:
+  - awscc::v26.07.00426
+  - aws::v26.08.00444
+
+globals:
+  - name: region
+    value: "{{ AWS_REGION }}"
+  - name: run_id
+    description: unique suffix per run (for example the CI run id)
+    value: "{{ RUN_ID }}"
+  - name: param_prefix
+    value: "/stackql-deploy/{{ stack_env }}/{{ run_id }}"
+  - name: app_config_value
+    description: changed between builds by the test harness to drive the update path; masked in all output
+    value: "{{ APP_CONFIG_VALUE }}"
+    protected: true
+  - name: global_tags
+    value:
+      stackql:stack-name: "{{ stack_name }}"
+      stackql:stack-env: "{{ stack_env }}"
+      stackql:run-id: "{{ run_id }}"
+
+resources:
+
+  # ---------------------------------------------------------------------------
+  # Cloud Control resource: INSERT ... RETURNING *, return_vals, callback,
+  # PatchDocument update, protected export
+  # ---------------------------------------------------------------------------
+  - name: app_config
+    description: application configuration parameter managed through the Cloud Control API
+    file: awscc_parameter.iql
+    props:
+      - name: param_name
+        value: "{{ param_prefix }}/app-config"
+      - name: param_value
+        value: "{{ app_config_value }}"
+      - name: param_description
+        values:
+          ci:
+            value: "stackql-deploy live test parameter (ci)"
+          dev:
+            value: "stackql-deploy live test parameter (dev)"
+      - name: param_tags
+        merge:
+          - global_tags
+        value: file(app_config_tags.json)
+    return_vals:
+      create:
+        - Identifier: identifier
+        - OperationStatus
+        - RequestToken
+      update:
+        - RequestToken
+      delete:
+        - RequestToken
+        - OperationStatus
+    exports:
+      - app_config_name
+      - app_config_value
+    protected:
+      - app_config_value
+
+  # ---------------------------------------------------------------------------
+  # Query resource reading the same parameter through the native API, with
+  # JSON extraction. Opts out of teardown.
+  # ---------------------------------------------------------------------------
+  - name: app_config_lookup
+    description: version and ARN of app_config via the native SSM API
+    type: query
+    file: aws_get_parameter.iql
+    skip_on_delete: true
+    props:
+      - name: lookup_names
+        value:
+          - "{{ app_config_name }}"
+    exports:
+      - app_config_version
+      - app_config_arn
+
+  # ---------------------------------------------------------------------------
+  # Native API resource using createorupdate (REPLACE) and a FROM-less
+  # exports query
+  # ---------------------------------------------------------------------------
+  - name: feature_flags
+    description: feature flag parameter managed with the native PutParameter API
+    file: aws_parameter.iql
+    props:
+      - name: param_name
+        value: "{{ param_prefix }}/feature-flags"
+      - name: param_value
+        value: "beta=on,dark_mode=off"
+    exports:
+      - feature_flags_name
+
+  # ---------------------------------------------------------------------------
+  # Conditions: one query runs, one is skipped
+  # ---------------------------------------------------------------------------
+  - name: prefix_summary
+    description: number of parameters created by this run
+    type: query
+    if: "'{{ stack_env }}' != 'prd'"
+    props: []
+    sql: |
+      SELECT COUNT(*) AS param_count
+      FROM awscc.ssm.parameters_list_only
+      WHERE region = '{{ region }}'
+      AND INSTR(name, '{{ param_prefix }}/') = 1
+    exports:
+      - param_count
+
+  - name: prd_only_check
+    description: never runs outside prd, exercises the skip path of `if`
+    type: query
+    if: "'{{ stack_env }}' == 'prd'"
+    props: []
+    sql: |
+      SELECT COUNT(*) AS prd_param_count
+      FROM awscc.ssm.parameters_list_only
+      WHERE region = '{{ region }}'
+    exports:
+      - prd_param_count
+
+  # ---------------------------------------------------------------------------
+  # Command resource: a mutation with no lifecycle of its own (tags the
+  # parameter above; the tags disappear with the parameter on teardown),
+  # followed by a query that reads the result back
+  # ---------------------------------------------------------------------------
+  - name: tag_feature_flags
+    description: tag the feature flag parameter with the run that deployed it
+    type: command
+    props:
+      - name: resource_tags
+        value:
+          - Key: stackql:deployed-by
+            Value: "stackql-deploy-live-{{ run_id }}"
+    sql: |
+      UPDATE aws.ssm.tags
+      SET Tags = '{{ resource_tags }}'
+      WHERE ResourceType = 'Parameter'
+      AND ResourceId = '{{ feature_flags_name }}'
+      AND region = '{{ region }}'
+
+  - name: feature_flags_tags
+    description: read back the tag applied by the command above
+    type: query
+    props: []
+    sql: |
+      SELECT JSON_EXTRACT(tag_list, '$[0].Value') AS feature_flags_deployed_by
+      FROM aws.ssm.tags
+      WHERE ResourceType = 'Parameter'
+      AND ResourceId = '{{ feature_flags_name }}'
+      AND region = '{{ region }}'
+    exports:
+      - feature_flags_deployed_by
+
+  # ---------------------------------------------------------------------------
+  # Script resource: external command exporting JSON
+  # ---------------------------------------------------------------------------
+  - name: deploy_marker
+    description: records which run deployed the stack
+    type: script
+    run: 'echo "{\"deployed_by\": \"stackql-deploy-live-{{ run_id }}\"}"'
+    exports:
+      - deployed_by
+
+exports:
+  - app_config_name
+  - app_config_version
+  - app_config_arn
+  - feature_flags_name
+  - feature_flags_deployed_by
+  - param_count
+  - deployed_by

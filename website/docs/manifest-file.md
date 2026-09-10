@@ -141,6 +141,12 @@ the fields within the __`stackql_manifest.yml`__ file are described in further d
 
 ***
 
+### <span className="docFieldHeading">`resource.skip_on_delete`</span>
+
+<ManifestFields.ResourceSkipOnDelete />
+
+***
+
 ### <span className="docFieldHeading">`resource.callback`</span>
 
 There is no `callback` section in the manifest schema.  Callback behaviour — including what to poll, retry counts, retry delays, and short-circuit conditions — is configured entirely within the resource's `.iql` file using the `/*+ callback */` anchor.  This prevents confusion for users who might expect a manifest entry by analogy with `props` and `exports`.

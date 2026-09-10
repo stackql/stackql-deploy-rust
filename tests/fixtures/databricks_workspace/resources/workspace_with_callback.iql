@@ -1,0 +1,39 @@
+/*+ exists */
+SELECT COUNT(*) AS count
+FROM databricks_account.provisioning.workspaces
+WHERE account_id = '{{ account_id }}'
+AND workspace_name = '{{ workspace_name }}'
+
+/*+ create */
+INSERT INTO databricks_account.provisioning.workspaces (
+  account_id,
+  workspace_name
+)
+SELECT
+  '{{ account_id }}',
+  '{{ workspace_name }}'
+
+/*+ statecheck, retries=1, retry_delay=0 */
+SELECT COUNT(*) AS count
+FROM databricks_account.provisioning.workspaces
+WHERE account_id = '{{ account_id }}'
+AND workspace_name = '{{ workspace_name }}'
+AND workspace_status = 'RUNNING'
+
+/*+ exports */
+SELECT workspace_id, deployment_name
+FROM databricks_account.provisioning.workspaces
+WHERE account_id = '{{ account_id }}'
+AND workspace_name = '{{ workspace_name }}'
+
+/*+ delete */
+DELETE FROM databricks_account.provisioning.workspaces
+WHERE account_id = '{{ account_id }}'
+AND workspace_id = '{{ workspace_id }}'
+RETURNING *
+
+/*+ callback:delete, retries=2, retry_delay=0 */
+SELECT workspace_status = 'DELETED' AS success
+FROM databricks_account.provisioning.workspaces
+WHERE account_id = '{{ account_id }}'
+AND workspace_id = '{{ callback.workspace_id }}'

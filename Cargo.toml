@@ -1,6 +1,6 @@
 [package]
 name = "stackql-deploy"
-version = "2.1.1"
+version = "2.2.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Infrastructure-as-code framework for declarative cloud resource management using StackQL"
@@ -12,10 +12,22 @@ keywords = ["stackql", "infrastructure", "iac", "cloud", "devops"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
 
-# docs.rs: this is a binary-only crate — no public library API to document.
+# docs.rs: the library target exists only so the integration tests in
+# tests/ can drive the command runner in-process; it is not a public API.
 # The README (above) is what crates.io renders on the package page.
 [package.metadata.docs.rs]
 no-default-features = true
+
+# Module-level doc comments contain illustrative snippets that reference
+# crate-internal paths; they are not compilable examples, so doctests are off.
+[lib]
+name = "stackql_deploy"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "stackql-deploy"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.3", features = ["derive"] }

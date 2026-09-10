@@ -99,7 +99,7 @@ pub fn execute(matches: &ArgMatches) {
 }
 
 /// Main test workflow matching Python's StackQLTestRunner.run().
-fn run_test(
+pub fn run_test(
     runner: &mut CommandRunner,
     dry_run: bool,
     show_queries: bool,
@@ -125,17 +125,28 @@ fn run_test(
 
         let res_type = get_resource_type(resource).to_string();
 
+        let mut full_context = runner.get_full_context(resource);
+
+        // Evaluate condition (same semantics as build and teardown)
+        if !runner.evaluate_condition(resource, &full_context) {
+            continue;
+        }
+
         if res_type == "query" {
             info!("exporting variables for [{}]", resource.name);
         } else if res_type == "resource" || res_type == "multi" {
             info!("testing resource [{}], type: {}", resource.name, res_type);
         } else if res_type == "command" {
+            // Commands are mutations with no state to test.
+            continue;
+        } else if res_type == "script" {
+            // Scripts are the only source of their exports, which later
+            // resources may reference; run them exactly as build does.
+            runner.process_script_resource(resource, dry_run, &full_context);
             continue;
         } else {
             catch_error_and_exit(&format!("unknown resource type: {}", res_type));
         }
-
-        let mut full_context = runner.get_full_context(resource);
 
         // Get test queries (templates only, not yet rendered)
         let (test_queries, inline_query) =

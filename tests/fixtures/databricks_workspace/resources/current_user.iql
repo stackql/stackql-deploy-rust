@@ -1,0 +1,4 @@
+/*+ exports, retries=2, retry_delay=0 */
+SELECT userName AS workspace_principal
+FROM databricks_workspace.iam.current_user
+WHERE deployment_name = '{{ deployment_name }}'
