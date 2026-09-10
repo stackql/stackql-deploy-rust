@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/commands/build.rs`."><title>build.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-1ed95124.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="stackql_deploy" data-themes="" data-resource-suffix="" data-rustdoc-version="1.98.0 (88d9e12ae 2026-08-18)" data-channel="1.98.0" data-search-js="search-9944d736.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">stackql_deploy/commands/</div>build.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// commands/build.rs
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/commands/build.rs`."><title>build.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-1ed95124.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="stackql_deploy" data-themes="" data-resource-suffix="" data-rustdoc-version="1.98.1 (48a229cea 2026-09-01)" data-channel="1.98.1" data-search-js="search-9944d736.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">stackql_deploy/commands/</div>build.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// commands/build.rs
 <a href=#2 id=2 data-nosnippet>2</a>
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! # Build Command
 <a href=#4 id=4 data-nosnippet>4</a>//!
@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a>    FailureAction,
 <a href=#19 id=19 data-nosnippet>19</a>};
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span><span class="kw">crate</span>::core::config::get_resource_type;
-<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span><span class="kw">crate</span>::core::utils::{catch_error_and_exit, export_vars};
+<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span><span class="kw">crate</span>::core::utils::{catch_error_and_exit, export_vars, DRY_RUN_EXPORT_PLACEHOLDER};
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span><span class="kw">crate</span>::utils::connection::create_client;
 <a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span><span class="kw">crate</span>::utils::display::{print_unicode_box, BorderColor};
 <a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span><span class="kw">crate</span>::utils::server::{check_and_start_server, stop_local_server};
@@ -137,7 +137,7 @@
 <a href=#137 id=137 data-nosnippet>137</a>}
 <a href=#138 id=138 data-nosnippet>138</a>
 <a href=#139 id=139 data-nosnippet>139</a><span class="doccomment">/// Main build workflow matching Python's StackQLProvisioner.run().
-<a href=#140 id=140 data-nosnippet>140</a></span><span class="kw">fn </span>run_build(
+<a href=#140 id=140 data-nosnippet>140</a></span><span class="kw">pub fn </span>run_build(
 <a href=#141 id=141 data-nosnippet>141</a>    runner: <span class="kw-2">&amp;mut </span>CommandRunner,
 <a href=#142 id=142 data-nosnippet>142</a>    dry_run: bool,
 <a href=#143 id=143 data-nosnippet>143</a>    show_queries: bool,
@@ -1017,56 +1017,58 @@
 <a href=#1017 id=1017 data-nosnippet>1017</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(map) = item.as_mapping() {
 <a href=#1018 id=1018 data-nosnippet>1018</a>                        <span class="kw">for </span>(<span class="kw">_</span>, val) <span class="kw">in </span>map {
 <a href=#1019 id=1019 data-nosnippet>1019</a>                            <span class="kw">if let </span><span class="prelude-val">Some</span>(v) = val.as_str() {
-<a href=#1020 id=1020 data-nosnippet>1020</a>                                placeholder_data.insert(v.to_string(), <span class="string">"&lt;evaluated&gt;"</span>.to_string());
-<a href=#1021 id=1021 data-nosnippet>1021</a>                            }
-<a href=#1022 id=1022 data-nosnippet>1022</a>                        }
-<a href=#1023 id=1023 data-nosnippet>1023</a>                    } <span class="kw">else if let </span><span class="prelude-val">Some</span>(s) = item.as_str() {
-<a href=#1024 id=1024 data-nosnippet>1024</a>                        placeholder_data.insert(s.to_string(), <span class="string">"&lt;evaluated&gt;"</span>.to_string());
-<a href=#1025 id=1025 data-nosnippet>1025</a>                    }
-<a href=#1026 id=1026 data-nosnippet>1026</a>                }
-<a href=#1027 id=1027 data-nosnippet>1027</a>                <span class="macro">info!</span>(
-<a href=#1028 id=1028 data-nosnippet>1028</a>                    <span class="string">"dry run: injecting placeholder exports for [{}]: {:?}"</span>,
-<a href=#1029 id=1029 data-nosnippet>1029</a>                    resource.name,
-<a href=#1030 id=1030 data-nosnippet>1030</a>                    placeholder_data.keys().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#1031 id=1031 data-nosnippet>1031</a>                );
-<a href=#1032 id=1032 data-nosnippet>1032</a>                export_vars(
-<a href=#1033 id=1033 data-nosnippet>1033</a>                    <span class="kw-2">&amp;mut </span>runner.global_context,
-<a href=#1034 id=1034 data-nosnippet>1034</a>                    <span class="kw-2">&amp;</span>resource.name,
-<a href=#1035 id=1035 data-nosnippet>1035</a>                    <span class="kw-2">&amp;</span>placeholder_data,
-<a href=#1036 id=1036 data-nosnippet>1036</a>                    <span class="kw-2">&amp;</span>resource.protected,
-<a href=#1037 id=1037 data-nosnippet>1037</a>                );
-<a href=#1038 id=1038 data-nosnippet>1038</a>            } <span class="kw">else </span>{
-<a href=#1039 id=1039 data-nosnippet>1039</a>                runner.run_troubleshoot(
-<a href=#1040 id=1040 data-nosnippet>1040</a>                    resource,
-<a href=#1041 id=1041 data-nosnippet>1041</a>                    <span class="kw-2">&amp;</span>resource_queries,
-<a href=#1042 id=1042 data-nosnippet>1042</a>                    <span class="string">"create"</span>,
-<a href=#1043 id=1043 data-nosnippet>1043</a>                    <span class="kw-2">&amp;</span>full_context,
-<a href=#1044 id=1044 data-nosnippet>1044</a>                    show_queries,
-<a href=#1045 id=1045 data-nosnippet>1045</a>                );
-<a href=#1046 id=1046 data-nosnippet>1046</a>                catch_error_and_exit(<span class="kw-2">&amp;</span><span class="macro">format!</span>(
-<a href=#1047 id=1047 data-nosnippet>1047</a>                    <span class="string">"exports query for [{}] could not be rendered - unresolved template variables. \
-<a href=#1048 id=1048 data-nosnippet>1048</a>                     Check that all referenced variables are defined in the manifest or exported by prior resources."</span>,
-<a href=#1049 id=1049 data-nosnippet>1049</a>                    resource.name
-<a href=#1050 id=1050 data-nosnippet>1050</a>                ));
-<a href=#1051 id=1051 data-nosnippet>1051</a>            }
-<a href=#1052 id=1052 data-nosnippet>1052</a>        }
-<a href=#1053 id=1053 data-nosnippet>1053</a>
-<a href=#1054 id=1054 data-nosnippet>1054</a>        <span class="kw">if </span>!dry_run {
-<a href=#1055 id=1055 data-nosnippet>1055</a>            <span class="kw">if </span>res_type == <span class="string">"resource" </span>{
-<a href=#1056 id=1056 data-nosnippet>1056</a>                <span class="macro">info!</span>(<span class="string">"successfully deployed {}"</span>, resource.name);
-<a href=#1057 id=1057 data-nosnippet>1057</a>            } <span class="kw">else if </span>res_type == <span class="string">"query" </span>{
-<a href=#1058 id=1058 data-nosnippet>1058</a>                <span class="macro">info!</span>(
-<a href=#1059 id=1059 data-nosnippet>1059</a>                    <span class="string">"successfully exported variables for query in {}"</span>,
-<a href=#1060 id=1060 data-nosnippet>1060</a>                    resource.name
-<a href=#1061 id=1061 data-nosnippet>1061</a>                );
-<a href=#1062 id=1062 data-nosnippet>1062</a>            }
-<a href=#1063 id=1063 data-nosnippet>1063</a>        }
-<a href=#1064 id=1064 data-nosnippet>1064</a>    }
-<a href=#1065 id=1065 data-nosnippet>1065</a>
-<a href=#1066 id=1066 data-nosnippet>1066</a>    <span class="kw">let </span>elapsed = start_time.elapsed();
-<a href=#1067 id=1067 data-nosnippet>1067</a>    <span class="kw">let </span>elapsed_str = <span class="macro">format!</span>(<span class="string">"{:.2?}"</span>, elapsed);
-<a href=#1068 id=1068 data-nosnippet>1068</a>    <span class="macro">info!</span>(<span class="string">"deployment completed in {}"</span>, elapsed_str);
-<a href=#1069 id=1069 data-nosnippet>1069</a>
-<a href=#1070 id=1070 data-nosnippet>1070</a>    runner.process_stack_exports(dry_run, output_file, <span class="kw-2">&amp;</span>elapsed_str);
-<a href=#1071 id=1071 data-nosnippet>1071</a>}
+<a href=#1020 id=1020 data-nosnippet>1020</a>                                placeholder_data
+<a href=#1021 id=1021 data-nosnippet>1021</a>                                    .insert(v.to_string(), DRY_RUN_EXPORT_PLACEHOLDER.to_string());
+<a href=#1022 id=1022 data-nosnippet>1022</a>                            }
+<a href=#1023 id=1023 data-nosnippet>1023</a>                        }
+<a href=#1024 id=1024 data-nosnippet>1024</a>                    } <span class="kw">else if let </span><span class="prelude-val">Some</span>(s) = item.as_str() {
+<a href=#1025 id=1025 data-nosnippet>1025</a>                        placeholder_data
+<a href=#1026 id=1026 data-nosnippet>1026</a>                            .insert(s.to_string(), DRY_RUN_EXPORT_PLACEHOLDER.to_string());
+<a href=#1027 id=1027 data-nosnippet>1027</a>                    }
+<a href=#1028 id=1028 data-nosnippet>1028</a>                }
+<a href=#1029 id=1029 data-nosnippet>1029</a>                <span class="macro">info!</span>(
+<a href=#1030 id=1030 data-nosnippet>1030</a>                    <span class="string">"dry run: injecting placeholder exports for [{}]: {:?}"</span>,
+<a href=#1031 id=1031 data-nosnippet>1031</a>                    resource.name,
+<a href=#1032 id=1032 data-nosnippet>1032</a>                    placeholder_data.keys().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#1033 id=1033 data-nosnippet>1033</a>                );
+<a href=#1034 id=1034 data-nosnippet>1034</a>                export_vars(
+<a href=#1035 id=1035 data-nosnippet>1035</a>                    <span class="kw-2">&amp;mut </span>runner.global_context,
+<a href=#1036 id=1036 data-nosnippet>1036</a>                    <span class="kw-2">&amp;</span>resource.name,
+<a href=#1037 id=1037 data-nosnippet>1037</a>                    <span class="kw-2">&amp;</span>placeholder_data,
+<a href=#1038 id=1038 data-nosnippet>1038</a>                    <span class="kw-2">&amp;</span>resource.protected,
+<a href=#1039 id=1039 data-nosnippet>1039</a>                );
+<a href=#1040 id=1040 data-nosnippet>1040</a>            } <span class="kw">else </span>{
+<a href=#1041 id=1041 data-nosnippet>1041</a>                runner.run_troubleshoot(
+<a href=#1042 id=1042 data-nosnippet>1042</a>                    resource,
+<a href=#1043 id=1043 data-nosnippet>1043</a>                    <span class="kw-2">&amp;</span>resource_queries,
+<a href=#1044 id=1044 data-nosnippet>1044</a>                    <span class="string">"create"</span>,
+<a href=#1045 id=1045 data-nosnippet>1045</a>                    <span class="kw-2">&amp;</span>full_context,
+<a href=#1046 id=1046 data-nosnippet>1046</a>                    show_queries,
+<a href=#1047 id=1047 data-nosnippet>1047</a>                );
+<a href=#1048 id=1048 data-nosnippet>1048</a>                catch_error_and_exit(<span class="kw-2">&amp;</span><span class="macro">format!</span>(
+<a href=#1049 id=1049 data-nosnippet>1049</a>                    <span class="string">"exports query for [{}] could not be rendered - unresolved template variables. \
+<a href=#1050 id=1050 data-nosnippet>1050</a>                     Check that all referenced variables are defined in the manifest or exported by prior resources."</span>,
+<a href=#1051 id=1051 data-nosnippet>1051</a>                    resource.name
+<a href=#1052 id=1052 data-nosnippet>1052</a>                ));
+<a href=#1053 id=1053 data-nosnippet>1053</a>            }
+<a href=#1054 id=1054 data-nosnippet>1054</a>        }
+<a href=#1055 id=1055 data-nosnippet>1055</a>
+<a href=#1056 id=1056 data-nosnippet>1056</a>        <span class="kw">if </span>!dry_run {
+<a href=#1057 id=1057 data-nosnippet>1057</a>            <span class="kw">if </span>res_type == <span class="string">"resource" </span>{
+<a href=#1058 id=1058 data-nosnippet>1058</a>                <span class="macro">info!</span>(<span class="string">"successfully deployed {}"</span>, resource.name);
+<a href=#1059 id=1059 data-nosnippet>1059</a>            } <span class="kw">else if </span>res_type == <span class="string">"query" </span>{
+<a href=#1060 id=1060 data-nosnippet>1060</a>                <span class="macro">info!</span>(
+<a href=#1061 id=1061 data-nosnippet>1061</a>                    <span class="string">"successfully exported variables for query in {}"</span>,
+<a href=#1062 id=1062 data-nosnippet>1062</a>                    resource.name
+<a href=#1063 id=1063 data-nosnippet>1063</a>                );
+<a href=#1064 id=1064 data-nosnippet>1064</a>            }
+<a href=#1065 id=1065 data-nosnippet>1065</a>        }
+<a href=#1066 id=1066 data-nosnippet>1066</a>    }
+<a href=#1067 id=1067 data-nosnippet>1067</a>
+<a href=#1068 id=1068 data-nosnippet>1068</a>    <span class="kw">let </span>elapsed = start_time.elapsed();
+<a href=#1069 id=1069 data-nosnippet>1069</a>    <span class="kw">let </span>elapsed_str = <span class="macro">format!</span>(<span class="string">"{:.2?}"</span>, elapsed);
+<a href=#1070 id=1070 data-nosnippet>1070</a>    <span class="macro">info!</span>(<span class="string">"deployment completed in {}"</span>, elapsed_str);
+<a href=#1071 id=1071 data-nosnippet>1071</a>
+<a href=#1072 id=1072 data-nosnippet>1072</a>    runner.process_stack_exports(dry_run, output_file, <span class="kw-2">&amp;</span>elapsed_str);
+<a href=#1073 id=1073 data-nosnippet>1073</a>}
 </code></pre></div></section></main></body></html>

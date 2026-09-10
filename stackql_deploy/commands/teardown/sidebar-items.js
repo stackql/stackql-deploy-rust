@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["collect_exports","command","execute","run_teardown"]};
+window.SIDEBAR_ITEMS = {"fn":["collect_exports","command","execute","render_for_teardown","run_teardown"]};
