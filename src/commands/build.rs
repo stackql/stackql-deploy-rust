@@ -18,7 +18,7 @@ use crate::commands::common_args::{
     FailureAction,
 };
 use crate::core::config::get_resource_type;
-use crate::core::utils::{catch_error_and_exit, export_vars};
+use crate::core::utils::{catch_error_and_exit, export_vars, DRY_RUN_EXPORT_PLACEHOLDER};
 use crate::utils::connection::create_client;
 use crate::utils::display::{print_unicode_box, BorderColor};
 use crate::utils::server::{check_and_start_server, stop_local_server};
@@ -137,7 +137,7 @@ macro_rules! render_exports {
 }
 
 /// Main build workflow matching Python's StackQLProvisioner.run().
-fn run_build(
+pub fn run_build(
     runner: &mut CommandRunner,
     dry_run: bool,
     show_queries: bool,
@@ -1017,11 +1017,13 @@ fn run_build(
                     if let Some(map) = item.as_mapping() {
                         for (_, val) in map {
                             if let Some(v) = val.as_str() {
-                                placeholder_data.insert(v.to_string(), "<evaluated>".to_string());
+                                placeholder_data
+                                    .insert(v.to_string(), DRY_RUN_EXPORT_PLACEHOLDER.to_string());
                             }
                         }
                     } else if let Some(s) = item.as_str() {
-                        placeholder_data.insert(s.to_string(), "<evaluated>".to_string());
+                        placeholder_data
+                            .insert(s.to_string(), DRY_RUN_EXPORT_PLACEHOLDER.to_string());
                     }
                 }
                 info!(

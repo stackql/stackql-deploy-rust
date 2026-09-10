@@ -1,0 +1,58 @@
+# Baseline fixture: a Databricks-on-AWS style stack where a query resource
+# (workspace_ready) and a workspace-level resource (storage_credential) both
+# depend on an export (deployment_name) produced by the account-level
+# workspace resource. Used by the integration tests in tests/teardown.rs and
+# tests/build.rs; the manifest_*.yml siblings are variants of this file.
+version: 1
+name: dbx-fixture
+description: databricks workspace fixture for integration tests
+providers:
+  - databricks_account::v26.07.00430
+  - databricks_workspace::v26.07.00430
+
+globals:
+  - name: account_id
+    value: "acct-0000"
+  - name: prefix
+    value: "{{ stack_name }}-{{ stack_env }}"
+
+resources:
+
+  - name: workspace
+    description: the account-level workspace, exports the deployment name
+    file: workspace.iql
+    props:
+      - name: workspace_name
+        value: "{{ prefix }}-workspace"
+    exports:
+      - workspace_id
+      - deployment_name
+
+  - name: workspace_ready
+    description: wait until the workspace answers the workspace API as the deploying principal
+    type: query
+    file: current_user.iql
+    props: []
+    exports:
+      - workspace_principal
+
+  - name: storage_credential
+    description: a workspace-level resource addressed by deployment_name
+    file: storage_credential.iql
+    props:
+      - name: name
+        value: "{{ prefix }}_credential"
+    exports:
+      - storage_credential_id
+
+  - name: estate_summary
+    description: inline query over the workspace as the account sees it
+    type: query
+    props: []
+    sql: |
+      SELECT workspace_status
+      FROM databricks_account.provisioning.workspaces
+      WHERE account_id = '{{ account_id }}'
+      AND workspace_id = '{{ workspace_id }}';
+    exports:
+      - workspace_status

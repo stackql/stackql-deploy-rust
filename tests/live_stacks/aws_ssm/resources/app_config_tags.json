@@ -1,0 +1,4 @@
+{
+  "stackql:resource": "app_config",
+  "stackql:purpose": "live-integration-test"
+}

@@ -19,7 +19,8 @@ use crate::core::utils::{
     catch_error_and_exit, check_exports_as_statecheck_proxy, check_short_circuit, export_vars,
     flatten_returning_row, has_returning_clause, perform_retries, perform_retries_with_fields,
     pull_providers, run_callback_poll, run_ext_script, run_stackql_command,
-    run_stackql_dml_returning, run_stackql_query, show_query,
+    run_stackql_dml_returning, run_stackql_query, show_query, unknown_exports_for,
+    DRY_RUN_EXPORT_PLACEHOLDER,
 };
 use crate::resource::manifest::{Manifest, Resource};
 use crate::resource::validation::validate_manifest;
@@ -168,6 +169,18 @@ impl CommandRunner {
         full_context: &HashMap<String, String>,
     ) -> String {
         templating::render_inline_template(&self.engine, resource_name, sql, full_context)
+    }
+
+    /// Tolerant variant of [`Self::render_inline_template`]: returns `None`
+    /// instead of exiting when the inline SQL references variables that are
+    /// not in the context. Used during teardown.
+    pub fn try_render_inline_template(
+        &self,
+        resource_name: &str,
+        sql: &str,
+        full_context: &HashMap<String, String>,
+    ) -> Option<String> {
+        templating::try_render_inline_template(&self.engine, resource_name, sql, full_context)
     }
 
     /// Render a single query template JIT with the current context.
@@ -483,32 +496,20 @@ impl CommandRunner {
         }
     }
 
-    /// Delete a resource and confirm deletion with an interleaved
-    /// delete-check-retry loop.
+    /// Execute one `delete` statement.
     ///
-    /// When `delete_retries > 0` the loop is:
-    ///   1. Execute DELETE
-    ///   2. Run exists query — count==0 → done, count==1 → continue, else → error
-    ///   3. Wait `delete_retry_delay` seconds
-    ///   4. Run exists query again — count==0 → done, count==1 → re-delete
-    ///      ... repeat up to `delete_retries` times
-    ///
-    /// When `delete_retries == 0`: single delete + single check, no retry.
-    ///
-    /// Returns the RETURNING * row (if any) from the first successful delete.
-    #[allow(clippy::too_many_arguments)]
-    pub fn delete_and_confirm(
+    /// Returns the `RETURNING *` row when the statement has a RETURNING
+    /// clause and the provider returned data, otherwise `None`. Retries are
+    /// the caller's business (see `run_teardown`), so the DML itself runs
+    /// once. In a dry run the statement is only logged.
+    pub fn execute_delete(
         &mut self,
         resource: &Resource,
         delete_query: &str,
-        exists_query: &str,
-        delete_retries: u32,
-        delete_retry_delay: u32,
         dry_run: bool,
         show_queries: bool,
         ignore_errors: bool,
-    ) -> (Option<HashMap<String, String>>, bool) {
-        // --- dry run path ---
+    ) -> Option<HashMap<String, String>> {
         if dry_run {
             if has_returning_clause(delete_query) {
                 info!(
@@ -521,190 +522,107 @@ impl CommandRunner {
                     resource.name, delete_query
                 );
             }
-            return (None, true);
+            return None;
         }
 
-        let mut returning_row: Option<HashMap<String, String>> = None;
-
-        // Helper closure: execute the DELETE statement once (no retries on the
-        // DML itself — retries are handled by the outer loop).
-        let execute_delete = |client: &mut crate::utils::pgwire::PgwireLite,
-                              query: &str,
-                              res_name: &str,
-                              sq: bool,
-                              ignore: bool| {
-            info!("deleting [{}]...", res_name);
-            show_query(sq, query);
-            if has_returning_clause(query) {
-                let (msg, row) = run_stackql_dml_returning(query, client, ignore, 0, 0);
-                debug!("Delete response: {}", msg);
-                row
-            } else {
-                let msg = run_stackql_command(query, client, ignore, 0, 0);
-                debug!("Delete response: {}", msg);
-                None
-            }
-        };
-
-        // Helper closure: run the exists query and return the count.
-        // Returns Ok(count) or Err(msg) for unexpected results.
-        let run_exists_count = |client: &mut crate::utils::pgwire::PgwireLite,
-                                query: &str,
-                                res_name: &str,
-                                sq: bool|
-         -> Result<i64, String> {
-            info!("running post-delete check for [{}]...", res_name);
-            show_query(sq, query);
-            let result = run_stackql_query(query, client, true, 0, 5);
-            if result.is_empty() {
-                return Ok(0); // no rows → resource gone
-            }
-            if result[0].contains_key("_stackql_deploy_error") || result[0].contains_key("error") {
-                return Ok(0); // error querying → treat as gone
-            }
-            if let Some(count_str) = result[0].get("count") {
-                if let Ok(count) = count_str.parse::<i64>() {
-                    return Ok(count);
-                }
-            }
-            // No count field — check if all field values are null/empty
-            // (resource gone) or any non-null value (resource still exists).
-            let row = &result[0];
-            let all_null = row.values().all(|v| v == "null" || v.is_empty());
-            if all_null {
-                Ok(0) // all null/empty → resource gone
-            } else {
-                Ok(1) // non-null value → resource still exists
-            }
-        };
-
-        // --- no-retry path: single delete + single check ---
-        if delete_retries == 0 {
-            let row = execute_delete(
-                &mut self.client,
-                delete_query,
-                &resource.name,
-                show_queries,
-                ignore_errors,
-            );
-            if returning_row.is_none() {
-                returning_row = row;
-            }
-            match run_exists_count(&mut self.client, exists_query, &resource.name, show_queries) {
-                Ok(0) => {
-                    info!("[{}] confirmed deleted", resource.name);
-                    return (returning_row, true);
-                }
-                Ok(1) => {
-                    info!(
-                        "[{}] delete dispatched (resource may still be deleting asynchronously)",
-                        resource.name
-                    );
-                    return (returning_row, false);
-                }
-                Ok(n) => {
-                    catch_error_and_exit(&format!(
-                        "Post-delete exists query for [{}] returned count={} (expected 0 or 1). \
-                         This indicates a query or logic error.",
-                        resource.name, n
-                    ));
-                }
-                Err(msg) => {
-                    catch_error_and_exit(&msg);
-                }
-            }
+        info!("deleting [{}]...", resource.name);
+        show_query(show_queries, delete_query);
+        if has_returning_clause(delete_query) {
+            let (msg, row) =
+                run_stackql_dml_returning(delete_query, &mut self.client, ignore_errors, 0, 0);
+            debug!("Delete response: {}", msg);
+            row
+        } else {
+            let msg = run_stackql_command(delete_query, &mut self.client, ignore_errors, 0, 0);
+            debug!("Delete response: {}", msg);
+            None
         }
+    }
 
-        // --- retry path: interleaved delete + check loop ---
+    /// Poll the exists query until the resource is gone.
+    ///
+    /// The first check runs immediately; if the resource is still present,
+    /// up to `postdelete_retries` further checks follow, each after
+    /// `postdelete_retry_delay` seconds (the `postdelete_*` options of the
+    /// `exists` anchor). Returns true once a check reports the resource gone.
+    /// A dry run reports success without querying.
+    pub fn confirm_deleted(
+        &mut self,
+        resource: &Resource,
+        exists_query: &str,
+        postdelete_retries: u32,
+        postdelete_retry_delay: u32,
+        dry_run: bool,
+        show_queries: bool,
+    ) -> bool {
+        if dry_run {
+            return true;
+        }
         let start = std::time::Instant::now();
-
-        for attempt in 0..delete_retries {
-            // Step 1: execute DELETE
-            let row = execute_delete(
-                &mut self.client,
-                delete_query,
-                &resource.name,
-                show_queries,
-                ignore_errors,
-            );
-            if returning_row.is_none() {
-                returning_row = row;
-            }
-
-            // Step 2: immediate post-delete check
-            match run_exists_count(&mut self.client, exists_query, &resource.name, show_queries) {
-                Ok(0) => {
-                    info!("[{}] confirmed deleted", resource.name);
-                    return (returning_row, true);
-                }
-                Ok(1) => {
-                    let elapsed = start.elapsed().as_secs();
-                    info!(
-                        "[{}] still exists after delete, attempt {}/{} ({} seconds elapsed)",
-                        resource.name,
-                        attempt + 1,
-                        delete_retries,
-                        elapsed
-                    );
-                }
-                Ok(n) => {
-                    catch_error_and_exit(&format!(
-                        "Post-delete exists query for [{}] returned count={} (expected 0 or 1). \
-                         This indicates a query or logic error.",
-                        resource.name, n
-                    ));
-                }
-                Err(msg) => {
-                    catch_error_and_exit(&msg);
-                }
-            }
-
-            // Step 3: wait retry_delay
-            if delete_retry_delay > 0 {
+        for check in 0..=postdelete_retries {
+            if check > 0 {
                 info!(
-                    "[{}] waiting {} seconds before next attempt...",
-                    resource.name, delete_retry_delay
+                    "[{}] still exists, waiting {} seconds before post-delete check {}/{} ({} seconds elapsed)",
+                    resource.name,
+                    postdelete_retry_delay,
+                    check,
+                    postdelete_retries,
+                    start.elapsed().as_secs()
                 );
-                std::thread::sleep(std::time::Duration::from_secs(delete_retry_delay as u64));
+                std::thread::sleep(std::time::Duration::from_secs(
+                    postdelete_retry_delay as u64,
+                ));
             }
-
-            // Step 4: check again after the delay (maybe it cleaned up)
-            match run_exists_count(&mut self.client, exists_query, &resource.name, show_queries) {
-                Ok(0) => {
+            match self.post_delete_count(resource, exists_query, show_queries) {
+                0 => {
                     info!("[{}] confirmed deleted", resource.name);
-                    return (returning_row, true);
+                    return true;
                 }
-                Ok(1) => {
-                    let elapsed = start.elapsed().as_secs();
-                    info!(
-                        "[{}] still exists after delay, attempt {}/{} ({} seconds elapsed), re-issuing delete...",
-                        resource.name,
-                        attempt + 1,
-                        delete_retries,
-                        elapsed
-                    );
-                    // Loop continues → next iteration will re-issue DELETE
-                }
-                Ok(n) => {
-                    catch_error_and_exit(&format!(
-                        "Post-delete exists query for [{}] returned count={} (expected 0 or 1). \
-                         This indicates a query or logic error.",
-                        resource.name, n
-                    ));
-                }
-                Err(msg) => {
-                    catch_error_and_exit(&msg);
-                }
+                1 => {}
+                n => catch_error_and_exit(&format!(
+                    "Post-delete exists query for [{}] returned count={} (expected 0 or 1). \
+                     This indicates a query or logic error.",
+                    resource.name, n
+                )),
             }
         }
-
-        // Exhausted all retries
-        let elapsed = start.elapsed().as_secs();
         info!(
-            "[{}] delete could not be confirmed after {} attempts ({} seconds elapsed)",
-            resource.name, delete_retries, elapsed
+            "[{}] still exists after {} post-delete check(s) ({} seconds elapsed)",
+            resource.name,
+            postdelete_retries + 1,
+            start.elapsed().as_secs()
         );
-        (returning_row, false)
+        false
+    }
+
+    /// Run the exists query once after a delete and reduce the result to a
+    /// count: 0 when the resource is gone (no rows, an error, a zero count, or
+    /// a row of nulls), 1 when it is still present, anything else verbatim.
+    fn post_delete_count(
+        &mut self,
+        resource: &Resource,
+        exists_query: &str,
+        show_queries: bool,
+    ) -> i64 {
+        info!("running post-delete check for [{}]...", resource.name);
+        show_query(show_queries, exists_query);
+        let result = run_stackql_query(exists_query, &mut self.client, true, 0, 5);
+        if result.is_empty() {
+            return 0;
+        }
+        let row = &result[0];
+        if row.contains_key("_stackql_deploy_error") || row.contains_key("error") {
+            return 0;
+        }
+        if let Some(count) = row.get("count").and_then(|c| c.parse::<i64>().ok()) {
+            return count;
+        }
+        let all_null = row.values().all(|v| v == "null" || v.is_empty());
+        if all_null {
+            0
+        } else {
+            1
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -934,7 +852,8 @@ impl CommandRunner {
                     if let Some(map) = item.as_mapping() {
                         for (_, val) in map {
                             if let Some(v) = val.as_str() {
-                                export_data.insert(v.to_string(), "<evaluated>".to_string());
+                                export_data
+                                    .insert(v.to_string(), DRY_RUN_EXPORT_PLACEHOLDER.to_string());
                             }
                         }
                     }
@@ -942,7 +861,7 @@ impl CommandRunner {
             } else {
                 for item in expected_exports {
                     if let Some(s) = item.as_str() {
-                        export_data.insert(s.to_string(), "<evaluated>".to_string());
+                        export_data.insert(s.to_string(), DRY_RUN_EXPORT_PLACEHOLDER.to_string());
                     }
                 }
             }
@@ -969,27 +888,9 @@ impl CommandRunner {
 
         if exports.is_empty() {
             if ignore_missing_exports {
-                // During teardown, set all expected exports to <unknown> so
-                // downstream queries can still render (the resource may
-                // already be partially deleted).
-                let mut fallback = HashMap::new();
-                for item in expected_exports {
-                    if let Some(s) = item.as_str() {
-                        fallback.insert(s.to_string(), "<unknown>".to_string());
-                    } else if let Some(map) = item.as_mapping() {
-                        for (_, val) in map {
-                            if let Some(v) = val.as_str() {
-                                fallback.insert(v.to_string(), "<unknown>".to_string());
-                            }
-                        }
-                    }
-                }
-                export_vars(
-                    &mut self.global_context,
-                    &resource.name,
-                    &fallback,
-                    protected_exports,
-                );
+                // During teardown the resource may already be partially
+                // deleted; mark its exports as unknown and carry on.
+                self.set_exports_unknown(resource);
                 return;
             }
             show_query(true, exports_query);
@@ -997,23 +898,28 @@ impl CommandRunner {
         }
 
         // Check for errors
-        if !exports.is_empty() {
-            if exports[0].contains_key("_stackql_deploy_error") {
-                let err_msg = exports[0].get("_stackql_deploy_error").unwrap();
-                show_query(true, exports_query);
-                catch_error_and_exit(&format!(
-                    "Exports query failed for {}\n\nError details:\n{}",
+        if let Some(err_msg) = exports[0]
+            .get("_stackql_deploy_error")
+            .or_else(|| exports[0].get("error"))
+        {
+            if ignore_missing_exports {
+                // During teardown a provider error on an exports query is
+                // not fatal (fatal network/auth errors already exited in
+                // run_stackql_query): the resource may be mid-deletion or
+                // unreachable. Mark the exports unknown so dependants are
+                // skipped, and carry on.
+                warn!(
+                    "exports query for [{}] failed during teardown, marking exports as unknown:\n\n{}\n",
                     resource.name, err_msg
-                ));
+                );
+                self.set_exports_unknown(resource);
+                return;
             }
-            if exports[0].contains_key("error") {
-                let err_msg = exports[0].get("error").unwrap();
-                show_query(true, exports_query);
-                catch_error_and_exit(&format!(
-                    "Exports query failed for {}\n\nError details:\n{}",
-                    resource.name, err_msg
-                ));
-            }
+            show_query(true, exports_query);
+            catch_error_and_exit(&format!(
+                "Exports query failed for {}\n\nError details:\n{}",
+                resource.name, err_msg
+            ));
         }
 
         if exports.len() > 1 {
@@ -1029,6 +935,27 @@ impl CommandRunner {
             expected_exports,
             all_dicts,
             protected_exports,
+        );
+    }
+
+    /// Set every declared export of `resource` to the teardown
+    /// [`crate::core::utils::UNKNOWN_EXPORT_PLACEHOLDER`] in the global
+    /// context.
+    ///
+    /// Called during teardown when the exports could not be collected: the
+    /// exports query returned no rows, could not be rendered, or the resource
+    /// was skipped via `skip_on_delete`. Downstream queries that interpolate
+    /// the placeholder are skipped rather than executed.
+    pub fn set_exports_unknown(&mut self, resource: &Resource) {
+        if resource.exports.is_empty() {
+            return;
+        }
+        let fallback = unknown_exports_for(&resource.exports);
+        export_vars(
+            &mut self.global_context,
+            &resource.name,
+            &fallback,
+            &resource.protected,
         );
     }
 

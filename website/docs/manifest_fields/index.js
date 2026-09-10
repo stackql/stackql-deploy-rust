@@ -18,6 +18,7 @@ export { default as ResourceAuth } from "./resources/auth.mdx";
 export { default as ResourceIf } from "./resources/if.mdx";
 export { default as ResourceSql } from "./resources/sql.mdx";
 export { default as ResourceSkipValidation } from "./resources/skipvalidation.mdx";
+export { default as ResourceSkipOnDelete } from "./resources/skipondelete.mdx";
 export { default as ResourcePropName } from "./resources/props/name.mdx";
 export { default as ResourcePropDescription } from "./resources/props/description.mdx";
 export { default as ResourcePropValue } from "./resources/props/value.mdx";

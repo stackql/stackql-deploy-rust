@@ -16,7 +16,11 @@ use crate::commands::common_args::{
     FailureAction,
 };
 use crate::core::config::get_resource_type;
-use crate::core::utils::{has_returning_clause, strip_returning_clause};
+use crate::core::utils::{
+    has_returning_clause, references_unknown_export, strip_returning_clause,
+    UNKNOWN_EXPORT_PLACEHOLDER,
+};
+use crate::resource::manifest::Resource;
 use crate::utils::connection::create_client;
 use crate::utils::display::{print_unicode_box, BorderColor};
 use crate::utils::server::{check_and_start_server, stop_local_server};
@@ -72,12 +76,7 @@ pub fn execute(matches: &ArgMatches) {
         BorderColor::Yellow,
     );
 
-    run_teardown(
-        &mut runner,
-        is_dry_run,
-        is_show_queries,
-        &format!("{:?}", on_failure_val),
-    );
+    run_teardown(&mut runner, is_dry_run, is_show_queries, *on_failure_val);
 
     if is_dry_run {
         print_unicode_box("dry-run teardown complete", BorderColor::Green);
@@ -88,7 +87,51 @@ pub fn execute(matches: &ArgMatches) {
     stop_local_server();
 }
 
+/// Render a query template for teardown.
+///
+/// Returns `None` when the query cannot or must not be executed:
+///
+/// - template variables are unresolved (an upstream export was never
+///   populated), or
+/// - the rendered SQL contains the [`UNKNOWN_EXPORT_PLACEHOLDER`] because an
+///   upstream export could not be collected.
+///
+/// In both cases `consequence` is logged so the operator can see why the
+/// resource was skipped.
+fn render_for_teardown(
+    runner: &CommandRunner,
+    resource: &Resource,
+    anchor: &str,
+    template: &str,
+    full_context: &std::collections::HashMap<String, String>,
+    consequence: &str,
+) -> Option<String> {
+    match runner.try_render_query(&resource.name, anchor, template, full_context) {
+        Some(rendered) if references_unknown_export(&rendered) => {
+            info!(
+                "[{}] {} query references an export that could not be collected ({}), {}",
+                resource.name, anchor, UNKNOWN_EXPORT_PLACEHOLDER, consequence
+            );
+            None
+        }
+        Some(rendered) => Some(rendered),
+        None => {
+            info!(
+                "[{}] {} query has unresolved variables, {}",
+                resource.name, anchor, consequence
+            );
+            None
+        }
+    }
+}
+
 /// Collect exports for all resources before teardown.
+///
+/// Exports are collected in manifest order so that a downstream resource's
+/// `exists`/`delete` queries can reference upstream values. Every resource
+/// ends this phase with each of its declared exports either populated or set
+/// to [`UNKNOWN_EXPORT_PLACEHOLDER`]; queries that would interpolate the
+/// placeholder are skipped by [`render_for_teardown`].
 fn collect_exports(runner: &mut CommandRunner, show_queries: bool, dry_run: bool) {
     info!(
         "collecting exports for [{}] in [{}] environment",
@@ -101,25 +144,63 @@ fn collect_exports(runner: &mut CommandRunner, show_queries: bool, dry_run: bool
         let res_type = get_resource_type(resource).to_string();
         info!("getting exports for resource [{}]", resource.name);
 
-        let mut full_context = runner.get_full_context(resource);
-
+        // Commands have no exports, and scripts are not executed during
+        // teardown; mark script exports unknown so downstream references
+        // are skipped rather than left unrenderable.
         if res_type == "command" {
             continue;
         }
+        if res_type == "script" {
+            runner.set_exports_unknown(resource);
+            continue;
+        }
+
+        // A query resource opted out of teardown: do not run it, and mark
+        // its exports unknown so anything depending on them is skipped.
+        if res_type == "query" && resource.skip_on_delete {
+            info!(
+                "[{}] skip_on_delete is set, query not executed during teardown",
+                resource.name
+            );
+            runner.set_exports_unknown(resource);
+            continue;
+        }
+
+        let mut full_context = runner.get_full_context(resource);
 
         let (exports_query, exports_retries, exports_retry_delay) = if let Some(sql_val) =
             resource.sql.as_ref().filter(|_| res_type == "query")
         {
-            let iq = runner.render_inline_template(&resource.name, sql_val, &full_context);
-            (Some(iq), 1u32, 0u32)
+            match runner.try_render_inline_template(&resource.name, sql_val, &full_context) {
+                Some(rendered) if references_unknown_export(&rendered) => {
+                    info!(
+                        "[{}] inline query references an export that could not be collected ({}), skipping exports collection",
+                        resource.name, UNKNOWN_EXPORT_PLACEHOLDER
+                    );
+                    (None, 1u32, 0u32)
+                }
+                Some(rendered) => (Some(rendered), 1u32, 0u32),
+                None => {
+                    info!(
+                        "[{}] inline query has unresolved variables, skipping exports collection",
+                        resource.name
+                    );
+                    (None, 1u32, 0u32)
+                }
+            }
         } else {
             let queries = runner.get_queries(resource, &full_context);
             // Run exists query first to capture this.* fields needed by
             // exports (e.g. this.identifier).
             if let Some(eq) = queries.get("exists") {
-                if let Some(rendered) =
-                    runner.try_render_query(&resource.name, "exists", &eq.template, &full_context)
-                {
+                if let Some(rendered) = render_for_teardown(
+                    runner,
+                    resource,
+                    "exists",
+                    &eq.template,
+                    &full_context,
+                    "assuming resource does not exist",
+                ) {
                     let (_exists, fields) = runner.check_if_resource_exists(
                         resource,
                         &rendered,
@@ -134,38 +215,30 @@ fn collect_exports(runner: &mut CommandRunner, show_queries: bool, dry_run: bool
                             full_context.insert(format!("{}.{}", resource.name, k), v.clone());
                         }
                     }
-                } else {
-                    info!(
-                            "[{}] exists query has unresolved variables, assuming resource does not exist",
-                            resource.name
-                        );
                 }
             }
             if let Some(eq) = queries.get("exports") {
-                match runner.try_render_query(
-                    &resource.name,
-                    "exports",
-                    &eq.template,
-                    &full_context,
-                ) {
-                    // During teardown use minimal retries - the resource may
-                    // already be partially deleted.
-                    Some(rendered) => (Some(rendered), 1u32, 0u32),
-                    None => {
-                        info!(
-                                "[{}] exports query has unresolved variables, skipping exports collection",
-                                resource.name
-                            );
-                        (None, 1u32, 0u32)
-                    }
-                }
+                // During teardown use minimal retries - the resource may
+                // already be partially deleted.
+                (
+                    render_for_teardown(
+                        runner,
+                        resource,
+                        "exports",
+                        &eq.template,
+                        &full_context,
+                        "skipping exports collection",
+                    ),
+                    1u32,
+                    0u32,
+                )
             } else {
                 (None, 1u32, 0u32)
             }
         };
 
-        if let Some(ref eq_str) = exports_query {
-            runner.process_exports(
+        match exports_query {
+            Some(ref eq_str) => runner.process_exports(
                 resource,
                 &full_context,
                 eq_str,
@@ -174,13 +247,34 @@ fn collect_exports(runner: &mut CommandRunner, show_queries: bool, dry_run: bool
                 dry_run,
                 show_queries,
                 true, // ignore_missing_exports
-            );
+            ),
+            // The exports could not be collected (no query, unresolved, or
+            // <unknown> upstream): mark them unknown so downstream queries
+            // referencing them are skipped consistently.
+            None => runner.set_exports_unknown(resource),
         }
     }
 }
 
 /// Main teardown workflow matching Python's StackQLDeProvisioner.run().
-fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _on_failure: &str) {
+///
+/// `on_failure` controls what happens when a `delete` statement fails at the
+/// provider:
+///
+/// - `Error` (default): the first failed delete aborts the run.
+/// - `Ignore`: the failure is logged, the resource is reported as not
+///   confirmed deleted, and the run continues with the next resource. Fatal
+///   errors (network, auth, planner) still abort.
+/// - `Rollback`: not meaningful for teardown; treated as `Error`.
+///
+/// A delete that cannot be confirmed within its retry budget never aborts the
+/// run on its own; such resources are listed in a summary at the end.
+pub fn run_teardown(
+    runner: &mut CommandRunner,
+    dry_run: bool,
+    show_queries: bool,
+    on_failure: FailureAction,
+) {
     let start_time = Instant::now();
 
     info!(
@@ -189,6 +283,24 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
         runner.stack_env,
         if dry_run { "(dry run)" } else { "" }
     );
+
+    let ignore_delete_errors = match on_failure {
+        FailureAction::Ignore => {
+            info!("on-failure=ignore: a failed delete is logged and the teardown continues with the next resource");
+            true
+        }
+        FailureAction::Rollback => {
+            warn!(
+                "on-failure=rollback is not supported for teardown, treating as on-failure=error"
+            );
+            false
+        }
+        FailureAction::Error => false,
+    };
+
+    // Resources whose delete was not confirmed (failed, or still present
+    // after the retry budget); reported once at the end of the run.
+    let mut unconfirmed: Vec<String> = Vec::new();
 
     // Collect all exports first
     collect_exports(runner, show_queries, dry_run);
@@ -212,6 +324,14 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
 
         if res_type != "resource" && res_type != "multi" {
             debug!("skipping resource [{}] (type: {})", resource.name, res_type);
+            continue;
+        }
+
+        if resource.skip_on_delete {
+            info!(
+                "[{}] skip_on_delete is set, resource retained (delete not executed)",
+                resource.name
+            );
             continue;
         }
 
@@ -245,35 +365,33 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
         let resource_queries = runner.get_queries(resource, &full_context);
 
         // Get exists query (fallback to statecheck) - render JIT
-        let (exists_query_str, exists_retries, exists_retry_delay) = if let Some(eq) =
-            resource_queries.get("exists")
-        {
-            if let Some(rendered) =
-                runner.try_render_query(&resource.name, "exists", &eq.template, &full_context)
-            {
-                (rendered, eq.options.retries, eq.options.retry_delay)
-            } else {
-                info!(
-                    "[{}] exists query has unresolved variables, assuming resource does not exist, skipping...",
-                    resource.name
-                );
-                continue;
+        let (exists_query_str, exists_opts) = if let Some(eq) = resource_queries.get("exists") {
+            match render_for_teardown(
+                runner,
+                resource,
+                "exists",
+                &eq.template,
+                &full_context,
+                "assuming resource does not exist, skipping...",
+            ) {
+                Some(rendered) => (rendered, eq.options.clone()),
+                None => continue,
             }
         } else if let Some(sq) = resource_queries.get("statecheck") {
             info!(
                 "exists query not defined for [{}], trying statecheck query as exists query.",
                 resource.name
             );
-            if let Some(rendered) =
-                runner.try_render_query(&resource.name, "statecheck", &sq.template, &full_context)
-            {
-                (rendered, sq.options.retries, sq.options.retry_delay)
-            } else {
-                info!(
-                    "[{}] statecheck has unresolved variables, skipping...",
-                    resource.name
-                );
-                continue;
+            match render_for_teardown(
+                runner,
+                resource,
+                "statecheck",
+                &sq.template,
+                &full_context,
+                "skipping...",
+            ) {
+                Some(rendered) => (rendered, sq.options.clone()),
+                None => continue,
             }
         } else {
             info!(
@@ -295,7 +413,7 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
         }
 
         // Pre-delete check
-        let ignore_errors = res_type == "multi";
+        let ignore_errors = res_type == "multi" || ignore_delete_errors;
         let resource_exists = if res_type == "multi" {
             info!("pre-delete check not supported for multi resources, skipping...");
             true
@@ -303,8 +421,8 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
             let (exists, fields) = runner.check_if_resource_exists(
                 resource,
                 &exists_query_str,
-                exists_retries,
-                exists_retry_delay,
+                exists_opts.retries,
+                exists_opts.retry_delay,
                 dry_run,
                 show_queries,
                 false,
@@ -316,29 +434,36 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
                     full_context.insert(format!("{}.{}", resource.name, k), v.clone());
                 }
             }
-            exists
+            // A dry run executes no queries, so the exists check above only
+            // logged its SQL and reported "not found". Assume the resource
+            // exists so the delete statement is rendered and logged too.
+            if dry_run {
+                info!(
+                    "dry run: assuming [{}] exists so the delete can be shown",
+                    resource.name
+                );
+                true
+            } else {
+                exists
+            }
         };
 
         // Delete
         if resource_exists {
             // Render the delete query now (after exists fields are available).
             let dq = resource_queries.get("delete").unwrap();
-            let rendered_delete = match runner.try_render_query(
-                &resource.name,
+            let rendered_delete = match render_for_teardown(
+                runner,
+                resource,
                 "delete",
                 &dq.template,
                 &full_context,
+                "cannot delete, skipping...",
             ) {
                 Some(rendered) => rendered,
-                None => {
-                    info!(
-                        "[{}] delete query has unresolved variables, assuming resource does not exist, skipping...",
-                        resource.name
-                    );
-                    continue;
-                }
+                None => continue,
             };
-            let delete_retries = dq.options.retries;
+            let delete_retries = dq.options.retries.max(1);
             let delete_retry_delay = dq.options.retry_delay;
 
             // Only keep a RETURNING clause when return_vals.delete is configured
@@ -365,24 +490,60 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
                 rendered_delete
             };
 
-            let (returning_row, delete_confirmed) = runner.delete_and_confirm(
-                resource,
-                &delete_query,
-                &exists_query_str,
-                delete_retries,
-                delete_retry_delay,
-                dry_run,
-                show_queries,
-                ignore_errors,
-            );
+            // Callback anchor, if any: polled after each delete attempt that
+            // returned a RETURNING * row, before the post-delete check.
+            let cb_anchor = if resource_queries.contains_key("callback:delete") {
+                Some("callback:delete")
+            } else if resource_queries.contains_key("callback") {
+                Some("callback")
+            } else {
+                None
+            };
 
-            // Capture RETURNING * result.
-            if let Some(ref row) = returning_row {
-                debug!("RETURNING payload for [{}]: {:?}", resource.name, row);
-                runner.store_callback_data(&resource.name, row);
+            // Delete, then confirm. Each attempt is: execute the delete,
+            // capture RETURNING * (return_vals + callback context), run the
+            // delete callback, then poll the exists query using the exists
+            // anchor's postdelete_retries / postdelete_retry_delay. If the
+            // resource is still present, wait retry_delay and re-issue the
+            // delete, up to the delete anchor's retries.
+            let mut delete_confirmed = false;
+            for attempt in 0..delete_retries {
+                if attempt > 0 {
+                    if delete_retry_delay > 0 {
+                        info!(
+                            "[{}] waiting {} seconds before re-issuing delete (attempt {}/{})...",
+                            resource.name,
+                            delete_retry_delay,
+                            attempt + 1,
+                            delete_retries
+                        );
+                        std::thread::sleep(std::time::Duration::from_secs(
+                            delete_retry_delay as u64,
+                        ));
+                    } else {
+                        info!(
+                            "[{}] re-issuing delete (attempt {}/{})...",
+                            resource.name,
+                            attempt + 1,
+                            delete_retries
+                        );
+                    }
+                }
 
-                // Apply return_vals.delete mappings from manifest.
-                if !delete_return_mappings.is_empty() {
+                let returning_row = runner.execute_delete(
+                    resource,
+                    &delete_query,
+                    dry_run,
+                    show_queries,
+                    ignore_errors,
+                );
+
+                // Capture RETURNING * result.
+                if let Some(ref row) = returning_row {
+                    debug!("RETURNING payload for [{}]: {:?}", resource.name, row);
+                    runner.store_callback_data(&resource.name, row);
+
+                    // Apply return_vals.delete mappings from manifest.
                     for (src, tgt) in &delete_return_mappings {
                         if let Some(val) = row.get(src.as_str()) {
                             if !val.is_empty() && val != "null" {
@@ -405,44 +566,70 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
                             );
                         }
                     }
-                }
-            } else if !delete_return_mappings.is_empty() {
-                warn!(
-                    "return_vals.delete specified for [{}] but no RETURNING data received",
-                    resource.name
-                );
-            }
-
-            // Run callback:delete block if present.
-            let cb_anchor = if resource_queries.contains_key("callback:delete") {
-                Some("callback:delete")
-            } else if resource_queries.contains_key("callback") {
-                Some("callback")
-            } else {
-                None
-            };
-            if let Some(anchor) = cb_anchor {
-                if let Some(q) = resource_queries.get(anchor) {
-                    let cb_template = q.template.clone();
-                    let cb_retries = q.options.retries;
-                    let cb_delay = q.options.retry_delay;
-                    let cb_sc_field = q.options.short_circuit_field.clone();
-                    let cb_sc_value = q.options.short_circuit_value.clone();
-                    let cb_ctx = runner.get_full_context(resource);
-                    let rendered_cb =
-                        runner.render_query(&resource.name, anchor, &cb_template, &cb_ctx);
-                    runner.run_callback(
-                        resource,
-                        &rendered_cb,
-                        cb_retries,
-                        cb_delay,
-                        cb_sc_field.as_deref(),
-                        cb_sc_value.as_deref(),
-                        "delete",
-                        dry_run,
-                        show_queries,
+                } else if !delete_return_mappings.is_empty() && !dry_run {
+                    warn!(
+                        "return_vals.delete specified for [{}] but no RETURNING data received",
+                        resource.name
                     );
                 }
+
+                // Run the delete callback. A callback polls the handle
+                // returned by RETURNING *, so there is nothing to poll when
+                // no row came back: a dry run, a delete without RETURNING, or
+                // a delete that failed and was ignored.
+                if let Some(anchor) = cb_anchor {
+                    if returning_row.is_none() {
+                        info!(
+                            "[{}] {} not run: the delete returned no RETURNING data{}",
+                            resource.name,
+                            anchor,
+                            if dry_run { " (dry run)" } else { "" }
+                        );
+                    } else if let Some(q) = resource_queries.get(anchor) {
+                        let cb_template = q.template.clone();
+                        let cb_retries = q.options.retries;
+                        let cb_delay = q.options.retry_delay;
+                        let cb_sc_field = q.options.short_circuit_field.clone();
+                        let cb_sc_value = q.options.short_circuit_value.clone();
+                        let cb_ctx = runner.get_full_context(resource);
+                        match runner.try_render_query(&resource.name, anchor, &cb_template, &cb_ctx)
+                        {
+                            Some(rendered_cb) => runner.run_callback(
+                                resource,
+                                &rendered_cb,
+                                cb_retries,
+                                cb_delay,
+                                cb_sc_field.as_deref(),
+                                cb_sc_value.as_deref(),
+                                "delete",
+                                dry_run,
+                                show_queries,
+                            ),
+                            None => warn!(
+                                "[{}] {} has unresolved variables and was not run",
+                                resource.name, anchor
+                            ),
+                        }
+                    }
+                }
+
+                if runner.confirm_deleted(
+                    resource,
+                    &exists_query_str,
+                    exists_opts.postdelete_retries,
+                    exists_opts.postdelete_retry_delay,
+                    dry_run,
+                    show_queries,
+                ) {
+                    delete_confirmed = true;
+                    break;
+                }
+            }
+            if !delete_confirmed {
+                info!(
+                    "[{}] delete could not be confirmed after {} attempt(s)",
+                    resource.name, delete_retries
+                );
             }
 
             if delete_confirmed {
@@ -456,6 +643,7 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
                     show_queries,
                 );
                 info!("[{}] delete could not be confirmed", resource.name);
+                unconfirmed.push(resource.name.clone());
             }
         } else {
             info!(
@@ -467,5 +655,18 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
     }
 
     let elapsed = start_time.elapsed();
-    info!("teardown completed in {:.2?}", elapsed);
+    if unconfirmed.is_empty() {
+        info!("teardown completed in {:.2?}", elapsed);
+    } else {
+        warn!(
+            "teardown completed in {:.2?} with {} resource(s) whose delete could not be confirmed: {}",
+            elapsed,
+            unconfirmed.len(),
+            unconfirmed
+                .iter()
+                .map(|n| format!("[{}]", n))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
 }

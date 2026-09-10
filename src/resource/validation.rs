@@ -105,6 +105,7 @@ mod tests {
                     description: String::new(),
                     r#if: None,
                     skip_validation: None,
+                    skip_on_delete: false,
                     auth: None,
                     return_vals: None,
                 })

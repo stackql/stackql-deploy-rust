@@ -1,0 +1,35 @@
+import File from '@site/src/components/File';
+import LeftAlignedTable from '@site/src/components/LeftAlignedTable';
+
+<LeftAlignedTable type="boolean" required={false} default={false} />
+
+When set to `true`, the resource is not processed by the `teardown` command. It has no effect on `build` or `test`.
+
+What "not processed" means depends on the resource type:
+
+- **`query`** - the query is not executed during teardown. Each of its declared `exports` is set to the `<unknown>` placeholder, and any downstream query that would interpolate one of those exports is skipped rather than run.
+- **`resource`** and **`multi`** - the resource's `exports` are still collected (a downstream `delete` may need them), but its own `delete` query is not executed, so the resource is retained.
+
+<File name='stackql_manifest.yml'>
+
+```yaml {5}
+resources:
+  - name: workspace_ready
+    description: wait until the new workspace answers the workspace API as the deploying principal
+    type: query
+    skip_on_delete: true
+    file: databricks_workspace/current_user.iql
+    props: []
+    exports:
+      - workspace_principal
+```
+
+</File>
+
+:::info
+
+- Use `skip_on_delete: true` on a `query` resource whose only purpose is to gate a `build` (readiness polls, post-deploy assertions, summaries) and which has nothing to contribute to a teardown. This avoids running a query against a resource that is about to be, or already has been, deleted.
+- Use `skip_on_delete: true` on a `resource` to retain it on teardown, for example a storage bucket that holds data, or a shared resource created out of band and only asserted by this stack.
+- During teardown, any `exists`, `statecheck`, `exports`, `delete`, or inline `sql` query whose rendered text contains `<unknown>` is skipped automatically, whether the placeholder came from `skip_on_delete` or from an upstream resource that no longer exists. `skip_on_delete` is therefore never required for a teardown to succeed; it is an explicit way to say a query should not run at all.
+
+:::
